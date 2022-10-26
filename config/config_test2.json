@@ -1,0 +1,33 @@
+{
+    "dataset_type": "DAVIS",
+    "dataset_path": "./datasets/DAVIS-train/JPEGImages/480p",
+    "data_extention": "jpg",
+    "cache_data": true,
+    "val_dataset_path": "./datasets/DAVIS-test/JPEGImages/480p/rollercoaster",
+    "enable_line_nortify": true,
+
+    "name": "fastdvd_level5",
+    "n_gpu": 1,
+    "steps": 400000,
+    "batch_size": 8,
+    "milestones": [250000, 300000, 350000],
+    "learning_rate_G": 1e-4,
+    "betas": [0.9, 0.999], 
+    "sigma_range": [5, 50],
+
+    "print_freq": 100,
+    "eval_freq": 5000,
+    "save_freq": 100000,
+    "pretrained_path": null,
+
+    "input_resolution": [96, 96],
+
+    "color_channels": 3,
+    "n_frames": 5,
+    "n_noise_channel": 1,
+    "level": 3,
+    "depths": [2, 2], 
+    "channel_info": [[64, 64], [64, 128]],
+    "bottom_depth": 2,
+    "bottom_dilations": [2, 2]
+}
