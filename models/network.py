@@ -1,10 +1,8 @@
-from operator import mod
-from turtle import forward
 import torch
 from torch import nn
 from torch.nn import functional as F
 from models.layers import ConvBNReLU, LaplacianPyramid, UNetBlock, RConvBNReLU, RDConvBNReLU, WienerFilter
-from models.layers import InputConvBlock, ConvBlock, OutputConvBlock
+from models.layers import InputConvBlock, ConvBlock, OutputConvBlock, NAFBlock
 from models.axial_transformer import AxialTransformerBlock
 
 class U2NetDenoisingBlock(nn.Module):
@@ -274,5 +272,254 @@ class FastDVDNetA(nn.Module):
         x21 = self.temp1(x1, x2, x3, noise_map)
         x22 = self.temp1(x2, x3, x4, noise_map)
         x = self.temp2(x20, x21, x22, noise_map)
+
+        return x
+
+
+class NAFDenoisingBlock(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+
+        self.intro = nn.Conv2d(in_channels=3*(opt.color_channels+1), out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+
+        self.encoders = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        self.middle_blks = nn.ModuleList()
+        self.ups = nn.ModuleList()
+        self.downs = nn.ModuleList()
+
+        chan = opt.width
+        for num in opt.enc_blk_nums:
+            self.encoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+            self.downs.append(
+                nn.Conv2d(chan, 2*chan, 2, 2)
+            )
+            chan = chan * 2
+
+        self.middle_blks = \
+            nn.Sequential(
+                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
+            )
+
+        for num in opt.dec_blk_nums:
+            self.ups.append(
+                nn.Sequential(
+                    nn.Conv2d(chan, chan * 2, 1, bias=False),
+                    nn.PixelShuffle(2)
+                )
+            )
+            chan = chan // 2
+            self.decoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+
+        self.padder_size = 2 ** len(self.encoders)
+
+    def forward(self, x0, x1, x2, noise_map):
+        x = torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1)
+
+        x = self.intro(x)
+
+        encs = []
+
+        for encoder, down in zip(self.encoders, self.downs):
+            x = encoder(x)
+            encs.append(x)
+            x = down(x)
+
+        x = self.middle_blks(x)
+
+        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
+            x = up(x)
+            x = x + enc_skip
+            x = decoder(x)
+
+        x = self.ending(x)
+        x = x + x1
+
+        return x
+
+class NAFDenoisingBlockSingle(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+
+        self.intro = nn.Conv2d(in_channels=opt.color_channels+1, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+
+        self.encoders = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        self.middle_blks = nn.ModuleList()
+        self.ups = nn.ModuleList()
+        self.downs = nn.ModuleList()
+
+        chan = opt.width
+        for num in opt.enc_blk_nums:
+            self.encoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+            self.downs.append(
+                nn.Conv2d(chan, 2*chan, 2, 2)
+            )
+            chan = chan * 2
+
+        self.middle_blks = \
+            nn.Sequential(
+                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
+            )
+
+        for num in opt.dec_blk_nums:
+            self.ups.append(
+                nn.Sequential(
+                    nn.Conv2d(chan, chan * 2, 1, bias=False),
+                    nn.PixelShuffle(2)
+                )
+            )
+            chan = chan // 2
+            self.decoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+
+        self.padder_size = 2 ** len(self.encoders)
+
+    def forward(self, x0, noise_map):
+        x = torch.cat([x0, noise_map], dim=1)
+
+        x = self.intro(x)
+
+        encs = []
+
+        for encoder, down in zip(self.encoders, self.downs):
+            x = encoder(x)
+            encs.append(x)
+            x = down(x)
+
+        x = self.middle_blks(x)
+
+        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
+            x = up(x)
+            x = x + enc_skip
+            x = decoder(x)
+
+        x = self.ending(x)
+        x = x + x0
+
+        return x
+
+class MultiStageNAF(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.temp1 = NAFDenoisingBlock(opt)
+        self.temp2 = NAFDenoisingBlock(opt)
+    
+    def forward(self, x0, x1, x2, x3, x4, noise_map):
+        x20 = self.temp1(x0, x1, x2, noise_map)
+        x21 = self.temp1(x1, x2, x3, noise_map)
+        x22 = self.temp1(x2, x3, x4, noise_map)
+        x = self.temp2(x20, x21, x22, noise_map)
+
+        return x
+
+class MultiStageNAF2(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.temp1 = NAFDenoisingBlockSingle(opt)
+        self.temp2 = NAFDenoisingBlock(opt)
+        self.temp3 = NAFDenoisingBlock(opt)
+        self.temp4 = NAFDenoisingBlockSingle(opt)
+    
+    def forward(self, x0, x1, x2, x3, x4, noise_map):
+        x0, x1, x2, x3, x4 = map(lambda x: self.temp1(x, noise_map), [x0, x1, x2, x3, x4])
+        x20 = self.temp2(x0, x1, x2, noise_map)
+        x21 = self.temp2(x1, x2, x3, noise_map)
+        x22 = self.temp2(x2, x3, x4, noise_map)
+        x = self.temp3(x20, x21, x22, noise_map)
+        x = self.temp4(x, noise_map)
+
+        return x
+
+class NAFDenoisingNet(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+
+        self.intro = nn.Conv2d(in_channels=5*opt.color_channels, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
+                              bias=True)
+
+        self.encoders = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        self.middle_blks = nn.ModuleList()
+        self.ups = nn.ModuleList()
+        self.downs = nn.ModuleList()
+
+        chan = opt.width
+        for num in opt.enc_blk_nums:
+            self.encoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+            self.downs.append(
+                nn.Conv2d(chan, 2*chan, 2, 2)
+            )
+            chan = chan * 2
+
+        self.middle_blks = \
+            nn.Sequential(
+                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
+            )
+
+        for num in opt.dec_blk_nums:
+            self.ups.append(
+                nn.Sequential(
+                    nn.Conv2d(chan, chan * 2, 1, bias=False),
+                    nn.PixelShuffle(2)
+                )
+            )
+            chan = chan // 2
+            self.decoders.append(
+                nn.Sequential(
+                    *[NAFBlock(chan) for _ in range(num)]
+                )
+            )
+
+        self.padder_size = 2 ** len(self.encoders)
+
+    def forward(self, x0, x1, x2, x3, x4, noise_map):
+        x = torch.cat([x0, x1, x2, x3, x4], dim=1)
+
+        x = self.intro(x)
+
+        encs = []
+
+        for encoder, down in zip(self.encoders, self.downs):
+            x = encoder(x)
+            encs.append(x)
+            x = down(x)
+
+        x = self.middle_blks(x)
+
+        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
+            x = up(x)
+            x = x + enc_skip
+            x = decoder(x)
+
+        x = self.ending(x)
+        x = x + x1
 
         return x

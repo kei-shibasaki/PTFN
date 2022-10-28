@@ -1,15 +1,23 @@
 import torch
 import numpy as np
 import time
+from easydict import EasyDict
 
-from models.network import FastDVDNet
+from models.network import FastDVDNet, NAFDenoisingNet, MultiStageNAF
 from models.networkM import FastDVDNetM, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
+from utils.utils import load_option
 
 def calc_speed(resolution):
+    opt_path = 'experiments/naf_multi/config_test.json'
+    #opt_path = 'experiments/naf/config_test.json'
+    opt = EasyDict(load_option(opt_path))
     device = torch.device('cuda:0')
+    resolution[0] = 16*(resolution[0]//16) if resolution[0]%16==0 else 16*(resolution[0]//16+1)
+    resolution[1] = 16*(resolution[1]//16) if resolution[1]%16==0 else 16*(resolution[1]//16+1)
 
     print('Creating Network...')
-    net = ExtremeStageDenoisingNetwork2().to(device)
+    net = MultiStageNAF(opt).to(device)
+    #net = MultiStageNAF2(opt).to(device)
     # checkpoint = torch.load(checkpoint_path, map_location=device)
     # net.load_state_dict(checkpoint['netG_state_dict'])
     net.eval()
@@ -33,8 +41,8 @@ def calc_speed(resolution):
 
 
 if __name__=='__main__':
-    H, W = 256, 256
+    #H, W = 256, 256
     #H, W = 480, 720
-    #H, W = 1080, 1920
-    runtimes = calc_speed(resolution=(H, W))
+    H, W = 1080, 1920
+    runtimes = calc_speed(resolution=[H, W])
     print(f'{np.mean(runtimes):f} ± {np.std(runtimes):f} s')

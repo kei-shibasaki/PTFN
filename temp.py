@@ -14,7 +14,7 @@ from tqdm import tqdm
 from metrics import calculate_psnr, calculate_ssim
 
 from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter
-from models.network import FastDVDNet, U2NetDenoisingBlock, VideoDenoisingNetwork, FastDVDNetA, LapDenoisingBlock, VideoDenoisingNetwork2, FastDVDNetWiener
+from models.network import FastDVDNet, U2NetDenoisingBlock, VideoDenoisingNetwork, FastDVDNetA, LapDenoisingBlock, VideoDenoisingNetwork2, FastDVDNetWiener, NAFDenoisingBlock, NAFDenoisingNet, MultiStageNAF, MultiStageNAF2
 from models.networkM import FastDVDNetM, TinyDenoisingBlock, TinyDenoisingBlockSingle, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
 from utils.utils import pad_tensor, tensor2ndarray, read_img
 from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset
@@ -53,23 +53,42 @@ def check_lap():
 
 
 def check_net():
-    with open('config/config_lap.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
     # x = torch.rand((1,16,128,128)).to(device)
-    b = 1
-    h, w = 96, 96
+    b = 8
+    h, w = 128, 128
     x0 = torch.rand((b,3,h,w)).to(device)
     x1 = torch.rand((b,3,h,w)).to(device)
     x2 = torch.rand((b,3,h,w)).to(device)
     x3 = torch.rand((b,3,h,w)).to(device)
     x4 = torch.rand((b,3,h,w)).to(device)
     noise_map = torch.rand((b,1,h,w)).to(device)
-    net = FastDVDNetWiener().to(device)
+    net = MultiStageNAF2(opt).to(device)
     out = net(x0, x1, x2, x3, x4, noise_map)
     print(out.shape)
     torchinfo.summary(net, input_data=[x0, x1, x2, x3, x4, noise_map])
     
+def check_block():
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    device = torch.device('cuda')
+    # x = torch.rand((1,16,128,128)).to(device)
+    b = 8
+    h, w = 256, 256
+    x0 = torch.rand((b,3,h,w)).to(device)
+    x1 = torch.rand((b,3,h,w)).to(device)
+    x2 = torch.rand((b,3,h,w)).to(device)
+    #x3 = torch.rand((b,3,h,w)).to(device)
+    #x4 = torch.rand((b,3,h,w)).to(device)
+    noise_map = torch.rand((b,1,h,w)).to(device)
+    net = NAFDenoisingBlock(opt).to(device)
+    out = net(x0, x1, x2, noise_map)
+    print(out.shape)
+    torchinfo.summary(net, input_data=[x0, x1, x2, noise_map])
+
+
 def check_dataloader():
     with open('config/config_unet.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
@@ -481,6 +500,41 @@ def check_wiener():
 
         exit()
 
+def compare_images():
+    import cv2
+    import glob
+    import numpy as np
+
+    temp = cv2.imread('experiments/fastdvd_b8/generated/50/400000/000.png')
+    H, W, C = temp.shape
+    W = W//3
+
+    img_paths1 = sorted(glob.glob('results/wiener/rollercoaster/generated/50/*.png'))
+    images1 = [cv2.imread(img_path) for img_path in img_paths1]
+    images1 = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images1]
+
+    img_paths2 = sorted(glob.glob('results/fastdvd_b8/rollercoaster/generated/50/*.png'))
+    images2 = [cv2.imread(img_path) for img_path in img_paths2]
+    images2 = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images2]
+
+    img_paths3 = sorted(glob.glob('results/fastdvd_b8/rollercoaster/GT/*.png'))
+    images3 = [cv2.imread(img_path) for img_path in img_paths3]
+    images3 = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images3]
+
+    images1 = [np.abs(img3-img1) for img1, img3 in zip(images1, images3)]
+    images2 = [np.abs(img3-img2) for img2, img3 in zip(images2, images3)]
+
+    temp1, temp2 = [], []
+    for img1, img2 in zip(images1, images2):
+        temp1.append(img1.mean())
+        temp2.append(img2.mean())
+    print(sum(temp1)/len(temp1), sum(temp2)/len(temp2))
+    
+    #images = [np.hstack([img1, img2, img3]) for img1, img2, img3 in zip(images1, images2, images3)]
+    images = [np.hstack([img1, img2]) for img1, img2 in zip(images1, images2)]
+    
+    for i, img in enumerate(tqdm(images)):
+        cv2.imwrite(os.path.join('temp', f'{i:03}.png'), img)
 
 if __name__=='__main__':
-    check_wiener()
+    check_net()

@@ -12,14 +12,15 @@ def smoothing(array, a):
 
 def compare_losses():
     name1 = 'fastdvd_b8'
-    name2 = 'wiener'
+    name2 = 'naf'
     train_log1 = pd.read_csv(f'experiments/{name1}/logs/train_losses_{name1}.csv')
     train_log2 = pd.read_csv(f'experiments/{name2}/logs/train_losses_{name2}.csv')
 
     plt.figure()
     plt.plot(train_log1['step'], smoothing(train_log1['loss_G'], 0.99), alpha=0.5, label=f'{name1}')
     plt.plot(train_log2['step'], smoothing(train_log2['loss_G'], 0.99), alpha=0.5, label=f'{name2}')
-    plt.ylim(0.0002, 0.0008)
+    #plt.ylim(0.0002, 0.0008)
+    plt.ylim(-40, -30)
     plt.legend()
     plt.grid()
     plt.savefig(f'temp/compare_train_{name1}_{name2}.png')

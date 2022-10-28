@@ -14,7 +14,7 @@ import numpy as np
 from utils.utils import tensor2ndarray, load_option, pad_tensor
 from dataloader import SingleVideoDenoisingTestDataset
 from easydict import EasyDict
-from models.network import FastDVDNet
+from models.network import NAFDenoisingNet, MultiStageNAF
 from models.networkM import FastDVDNetM, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
 
 def generate_images(opt, checkpoint_path, out_dir):
@@ -26,7 +26,7 @@ def generate_images(opt, checkpoint_path, out_dir):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     
     dataset_paths = sorted([d for d in glob.glob('datasets/DAVIS-test/JPEGImages/480p/*') if os.path.isdir(d)])
-    # dataset_paths = ['datasets/DAVIS-test/JPEGImages/480p/rollercoaster']
+    #dataset_paths = ['datasets/DAVIS-test/JPEGImages/480p/rollercoaster']
     for idx_dataset, dataset_path in enumerate(dataset_paths):
         dataset_name = os.path.basename(dataset_path)
         print(f'{idx_dataset}/{len(dataset_paths)}: Processing {dataset_name}')
@@ -34,7 +34,7 @@ def generate_images(opt, checkpoint_path, out_dir):
         os.makedirs(out_dataset_dir, exist_ok=True)
         os.makedirs(os.path.join(out_dataset_dir, 'GT'), exist_ok=True)
 
-        net = ExtremeStageDenoisingNetwork2().to(device)
+        net = MultiStageNAF(opt).to(device)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         net.load_state_dict(checkpoint['netG_state_dict'])
         net.eval()
@@ -50,7 +50,7 @@ def generate_images(opt, checkpoint_path, out_dir):
             for i, (x0, x1, x2, x3, x4, noise_map, gt, noise_level) in enumerate(val_loader):
                 _, _, H, W = x0.shape
                 x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: x.to(device), [x0, x1, x2, x3, x4, noise_map, gt])
-                x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: pad_tensor(x, divisible_by=8), [x0, x1, x2, x3, x4, noise_map, gt])
+                x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: pad_tensor(x, divisible_by=16), [x0, x1, x2, x3, x4, noise_map, gt])
                 with torch.no_grad():
                     out = net(x0, x1, x2, x3, x4, noise_map)
 
