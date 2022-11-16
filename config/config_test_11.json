@@ -6,10 +6,10 @@
     "val_dataset_path": "./datasets/DAVIS-test/JPEGImages/480p/rollercoaster",
     "enable_line_nortify": true,
 
-    "name": "naf_small_half2",
+    "name": "mimo_test_12",
     "n_gpu": 1,
     "steps": 400000,
-    "batch_size": 12,
+    "batch_size": 8,
     "use_grad_clip": true,
     "T_max": 400000,
     "eta_min": 1e-7,
@@ -25,7 +25,7 @@
     "input_resolution": [128, 128],
 
     "color_channels": 3,
-    "n_frames": 5,
+    "n_frames": 12,
     "n_noise_channel": 1,
     "width": 32,
     "enc_blk_nums": [1, 1, 1], 

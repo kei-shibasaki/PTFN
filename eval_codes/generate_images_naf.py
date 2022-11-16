@@ -34,7 +34,7 @@ def generate_images(opt, checkpoint_path, out_dir):
         os.makedirs(out_dataset_dir, exist_ok=True)
         os.makedirs(os.path.join(out_dataset_dir, 'GT'), exist_ok=True)
 
-        net = MultiStageNAF(opt).to(device)
+        net = NAFDenoisingNet(opt).to(device)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         net.load_state_dict(checkpoint['netG_state_dict'])
         net.eval()

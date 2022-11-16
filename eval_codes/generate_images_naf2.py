@@ -14,8 +14,7 @@ import numpy as np
 from utils.utils import tensor2ndarray, load_option, pad_tensor
 from dataloader import SingleVideoDenoisingTestDataset
 from easydict import EasyDict
-from models.network import NAFDenoisingNet, MultiStageNAF
-from models.networkM import FastDVDNetM, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
+from models.network import MultiStageNAF2
 
 def generate_images(opt, checkpoint_path, out_dir):
     seed = 0
@@ -34,13 +33,14 @@ def generate_images(opt, checkpoint_path, out_dir):
         os.makedirs(out_dataset_dir, exist_ok=True)
         os.makedirs(os.path.join(out_dataset_dir, 'GT'), exist_ok=True)
 
-        net = MultiStageNAF(opt).to(device)
+        net = MultiStageNAF2(opt).to(device)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         net.load_state_dict(checkpoint['netG_state_dict'])
         net.eval()
 
         opt.val_dataset_path = dataset_path
-        for sigma in tqdm([10,20,30,40,50]):
+        #for sigma in tqdm([10,20,30,40,50]):
+        for sigma in tqdm([50]):
             os.makedirs(os.path.join(out_dataset_dir, 'input', str(sigma)), exist_ok=True)
             os.makedirs(os.path.join(out_dataset_dir, 'generated', str(sigma)), exist_ok=True)
             os.makedirs(os.path.join(out_dataset_dir, 'comparison', str(sigma)), exist_ok=True)
@@ -50,9 +50,10 @@ def generate_images(opt, checkpoint_path, out_dir):
             for i, (x0, x1, x2, x3, x4, noise_map, gt, noise_level) in enumerate(val_loader):
                 _, _, H, W = x0.shape
                 x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: x.to(device), [x0, x1, x2, x3, x4, noise_map, gt])
-                x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: pad_tensor(x, divisible_by=16), [x0, x1, x2, x3, x4, noise_map, gt])
+                x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: pad_tensor(x, divisible_by=8), [x0, x1, x2, x3, x4, noise_map, gt])
                 with torch.no_grad():
-                    out = net(x0, x1, x2, x3, x4, noise_map)
+                    with torch.cuda.amp.autocast():
+                        out = net(x0, x1, x2, x3, x4, noise_map)
 
                 img, gen, gt = map(lambda x: tensor2ndarray(x), [x2, out, gt])
                 img, gen, gt = map(lambda x: x[:,:H,:W,:], [img, gen, gt])
@@ -62,7 +63,7 @@ def generate_images(opt, checkpoint_path, out_dir):
                 gt = Image.fromarray(gt[0,:,:,:])
 
                 fname = f'{i:03}.png'
-                if sigma==10: gt.save(os.path.join(out_dataset_dir, 'GT', fname), 'PNG')
+                if sigma==50: gt.save(os.path.join(out_dataset_dir, 'GT', fname), 'PNG')
                 img.save(os.path.join(out_dataset_dir, 'input', str(sigma), fname), 'PNG')
                 gen.save(os.path.join(out_dataset_dir, 'generated', str(sigma), fname), 'PNG')
                 

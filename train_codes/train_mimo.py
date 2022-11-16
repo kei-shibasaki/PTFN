@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import time
+import importlib
 
 import numpy as np
 import torch
@@ -13,9 +14,9 @@ from easydict import EasyDict
 from PIL import Image
 from torch.nn import functional as F
 
-from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset
+from dataloader import DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
 from metrics import calculate_psnr, calculate_ssim
-from models.network import MultiStageNAFWithMC2
+from models.network import MultiStageNAFMIMO
 from utils.utils import load_option, pad_tensor, tensor2ndarray, send_line_notify
 from losses import PSNRLoss
 
@@ -40,14 +41,16 @@ def train(opt_path):
         fp.write('')
     with open(f'{log_dir}/train_losses_{model_name}.csv', mode='w', encoding='utf-8') as fp:
         fp.write('step,lr,loss_G\n')
-    for sigma in [10,20,30,40,50]:
+    #for sigma in [10,20,30,40,50]:
+    for sigma in [50]:
         with open(f'{log_dir}/test_losses_{model_name}_{sigma}.csv', mode='w', encoding='utf-8') as fp:
             fp.write('step,loss_G,psnr,ssim\n')
     
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    netG = MultiStageNAFWithMC2(opt).to(device)
+    network_module = importlib.import_module('models.network_mimo')
+    netG = getattr(network_module, opt['model_type'])(opt).to(device)
     if opt.pretrained_path:
         netG_state_dict = torch.load(opt.pretrained_path, map_location=device)
         netG_state_dict = netG_state_dict['netG_state_dict']
@@ -56,11 +59,12 @@ def train(opt_path):
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
     schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
     
-    train_dataset = DAVISVideoDenoisingTrainDataset(opt)
+    train_dataset = DAVISVideoDenoisingTrainDatasetMIMO(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loaders = {}
-    for sigma in [10,20,30,40,50]:
-        val_dataset = SingleVideoDenoisingTestDataset(opt, sigma)
+    #for sigma in [10,20,30,40,50]:
+    for sigma in [50]:
+        val_dataset = SingleVideoDenoisingTestDatasetMIMO(opt, sigma)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
         val_loaders[sigma] = val_loader
 
@@ -69,14 +73,18 @@ def train(opt_path):
     total_step = 0
     netG.train()
     for e in range(1, 42*opt.steps):
-        for i, (x0, x1, x2, x3, x4, noise_map, gt, noise_level) in enumerate(train_loader):
-            x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: x.to(device), [x0, x1, x2, x3, x4, noise_map, gt])
+        for i, data in enumerate(train_loader):
+            # [(B,C,H,W)]*F -> (B,F,C,H,W)
+            input_seq = torch.stack(data['input_seq'], dim=1).to(device)
+            gt_seq = torch.stack(data['gt_seq'], dim=1).to(device)
+            noise_map = data['noise_map'].unsqueeze(1).to(device)
+
+            b,f,c,h,w = input_seq.shape
             
             # Training G
             netG.zero_grad()
-            gen = netG(x0, x1, x2, x3, x4, noise_map)
-            # gen = torch.sigmoid(gen)
-            loss_G = loss_fn(gen, gt)
+            gen = netG(input_seq, noise_map)
+            loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
 
             loss_G.backward()
             if opt.use_grad_clip:
@@ -86,7 +94,23 @@ def train(opt_path):
             total_step += 1
             
             schedulerG.step()
-            
+
+            if total_step%eval_freq==0:
+                # (B,F,C,H,W) -> [(B,C,H,W)]*F
+                imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
+                imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
+                gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
+                gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
+                os.makedirs(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}'), exist_ok=True)
+                for j, (img, gen, gt) in enumerate(zip(imgs, gens, gts)):
+                    # Visualization
+                    img, gen, gt = map(lambda x: Image.fromarray(x), [img, gen, gt])
+                    compare_img = Image.new('RGB', size=(3*img.width, img.height), color=0)
+                    compare_img.paste(img, box=(0, 0))
+                    compare_img.paste(gen, box=(img.width, 0))
+                    compare_img.paste(gt, box=(2*img.width, 0))
+                    compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'train_{i:03}_{j:03}.png'), 'PNG')
+
             if total_step%1==0:
                 lr_G = [group['lr'] for group in optimG.param_groups]
                 with open(f'{log_dir}/train_losses_{model_name}.csv', mode='a', encoding='utf-8') as fp:
@@ -107,46 +131,45 @@ def train(opt_path):
             if total_step%eval_freq==0:
                 # Validation
                 netG.eval()
-                for sigma in [10,20,30,40,50]:
+                #for sigma in [10,20,30,40,50]:
+                for sigma in [50]:
                     val_loader = val_loaders[sigma]
-                    psnr = 0.0
-                    ssim = 0.0
-                    loss_G = 0.0
-                    for j, (x0, x1, x2, x3, x4, noise_map, gt, noise_level) in enumerate(val_loader):
-                        x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: x.to(device), [x0, x1, x2, x3, x4, noise_map, gt])
-                        x0, x1, x2, x3, x4, noise_map, gt = map(lambda x: pad_tensor(x, divisible_by=16), [x0, x1, x2, x3, x4, noise_map, gt])
+                    psnr, ssim, loss_G = 0.0, 0.0, 0.0
+                    for i, data in enumerate(val_loader):
+                        # [(B,C,H,W)]*F -> (B,F,C,H,W)
+                        # print(len(data['input_seq']), data['input_seq'][0].shape)
+                        input_seq = torch.stack(data['input_seq'], dim=1).to(device)
+                        gt_seq = torch.stack(data['gt_seq'], dim=1).to(device)
+                        noise_map = data['noise_map'].unsqueeze(1).to(device)
+                        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=16), [input_seq, gt_seq, noise_map])
+                        b,f,c,h,w = input_seq.shape
                         with torch.no_grad():
-                            gen = netG(x0, x1, x2, x3, x4, noise_map)
-                            #gen = torch.sigmoid(gen)
-                            loss_G += loss_fn(gen, gt)
+                            gen = netG(input_seq, noise_map)
+                            loss_G += loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
                         
-                        img = x2
-                        img = tensor2ndarray(img)
-                        gen = tensor2ndarray(gen)
-                        gt = tensor2ndarray(gt)
+                        # (B,F,C,H,W) -> [(B,C,H,W)]*F
+                        imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
+                        
+                        imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
+                        gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
+                        gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
 
                         os.makedirs(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}'), exist_ok=True)
-                        psnr += calculate_psnr(gen[0,:,:,:], gt[0,:,:,:], crop_border=0, test_y_channel=False)
-                        ssim += calculate_ssim(gen[0,:,:,:], gt[0,:,:,:], crop_border=0, test_y_channel=False)
+                        for j, (img, gen, gt) in enumerate(zip(imgs, gens, gts)):
+                            psnr += calculate_psnr(gen, gt, crop_border=0, test_y_channel=False)
+                            ssim += calculate_ssim(gen, gt, crop_border=0, test_y_channel=False)
                             
-                        # Visualization
-                        if opt.color_channels==1:
-                            img = Image.fromarray(img[0,:,:,0])
-                            gen = Image.fromarray(gen[0,:,:,0])
-                            gt = Image.fromarray(gt[0,:,:,0])
-                        else:
-                            img = Image.fromarray(img[0,:,:,:])
-                            gen = Image.fromarray(gen[0,:,:,:])
-                            gt = Image.fromarray(gt[0,:,:,:])
-                        compare_img = Image.new('RGB', size=(3*img.width, img.height), color=0)
-                        compare_img.paste(img, box=(0, 0))
-                        compare_img.paste(gen, box=(img.width, 0))
-                        compare_img.paste(gt, box=(2*img.width, 0))
-                        compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'{j:03}.png'), 'PNG')
+                            # Visualization
+                            img, gen, gt = map(lambda x: Image.fromarray(x), [img, gen, gt])
+                            compare_img = Image.new('RGB', size=(3*img.width, img.height), color=0)
+                            compare_img.paste(img, box=(0, 0))
+                            compare_img.paste(gen, box=(img.width, 0))
+                            compare_img.paste(gt, box=(2*img.width, 0))
+                            compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'{i:03}_{j:03}.png'), 'PNG')
                     
                     loss_G = loss_G / len(val_loader)
-                    psnr = psnr / len(val_loader)
-                    ssim = ssim / len(val_loader)
+                    psnr = psnr / (len(val_loader)*opt.n_frames)
+                    ssim = ssim / (len(val_loader)*opt.n_frames)
                 
                     txt = f'sigma: {sigma}, loss_G: {loss_G:f}, PSNR: {psnr:f}, SSIM: {ssim:f}'
                     print(txt)

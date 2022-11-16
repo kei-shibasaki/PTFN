@@ -14,7 +14,7 @@ import numpy as np
 from utils.utils import tensor2ndarray, load_option, pad_tensor
 from dataloader import SingleVideoDenoisingTestDataset
 from easydict import EasyDict
-from models.network import FastDVDNet
+from models.network import FastDVDNet, NAFDenoisingNet, MultiStageNAF
 from models.networkM import FastDVDNetM, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
 
 def generate_images(opt, checkpoint_path, out_dir):

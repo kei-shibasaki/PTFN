@@ -94,7 +94,6 @@ class NAFBlock(nn.Module):
 
         return y + x * self.gamma
 
-
 class NAFNet(nn.Module):
     def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[]):
         super().__init__()
@@ -175,8 +174,27 @@ class NAFNet(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
 
-###
+class MotionCompensationAttention(nn.Module):
+    def __init__(self, dim, kernel_size=3):
+        super().__init__()
+        self.conv = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=1, padding=kernel_size//2)
+    
+    def forward(self, x):
+        return x * self.conv(x)
 
+class MotionCompensationAttention2(nn.Module):
+    def __init__(self, dim, kernel_size=3):
+        super().__init__()
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv2d(in_channels=dim, out_channels=dim, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+    
+    def forward(self, x):
+        a = x
+        x = self.gap(x)
+        x = self.conv(x)
+        return a * x
+
+###
 class ChanLayerNorm(nn.Module):
     def __init__(self, dim, eps=1e-5):
         super().__init__()

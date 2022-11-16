@@ -134,3 +134,4 @@ line_nortify_token.json
 results/
 temp/
 compare/
+.vscode/

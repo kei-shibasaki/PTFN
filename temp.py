@@ -12,12 +12,15 @@ from PIL import Image
 import os
 from tqdm import tqdm
 from metrics import calculate_psnr, calculate_ssim
+import cv2
+import time
 
-from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter
-from models.network import FastDVDNet, U2NetDenoisingBlock, VideoDenoisingNetwork, FastDVDNetA, LapDenoisingBlock, VideoDenoisingNetwork2, FastDVDNetWiener, NAFDenoisingBlock, NAFDenoisingNet, MultiStageNAF, MultiStageNAF2
+from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter, MotionCompensationAttention2
+from models.network import *
 from models.networkM import FastDVDNetM, TinyDenoisingBlock, TinyDenoisingBlockSingle, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
+from models.wnet_models import WNet
 from utils.utils import pad_tensor, tensor2ndarray, read_img
-from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset
+from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset, DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
 
 def check_lap3d():
     device = torch.device('cuda')
@@ -30,18 +33,19 @@ def check_lap3d():
 
 def check_layer():
     device = torch.device('cuda')
-    H, W = 256, 256
+    C, H, W = 12, 128, 128
+    x = torch.rand((1,C,H,W)).to(device)
     x0 = torch.rand((1,3,H,W)).to(device)
     x1 = torch.rand((1,3,H,W)).to(device)
     x2 = torch.rand((1,3,H,W)).to(device)
     noise_map = torch.rand((1,1,H,W)).to(device)
-    layer = TinyDenoisingBlockSingle().to(device)
+    layer = MotionCompensationAttention2(C).to(device)
     # out = layer(x0, x1, x2, noise_map)
-    out = layer(x0, noise_map)
+    out = layer(x)
     print(out.shape)
 
     # torchinfo.summary(layer, input_data=[x0, x1, x2, noise_map])
-    torchinfo.summary(layer, input_data=[x0, noise_map])
+    torchinfo.summary(layer, input_data=[x])
 
 def check_lap():
     device = torch.device('cuda')
@@ -53,22 +57,23 @@ def check_lap():
 
 
 def check_net():
-    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test_11.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
     # x = torch.rand((1,16,128,128)).to(device)
     b = 8
-    h, w = 128, 128
+    h, w = 96, 96
     x0 = torch.rand((b,3,h,w)).to(device)
     x1 = torch.rand((b,3,h,w)).to(device)
     x2 = torch.rand((b,3,h,w)).to(device)
     x3 = torch.rand((b,3,h,w)).to(device)
     x4 = torch.rand((b,3,h,w)).to(device)
+    x = torch.rand((b,3*opt.n_frames,h,w)).to(device)
     noise_map = torch.rand((b,1,h,w)).to(device)
-    net = MultiStageNAF2(opt).to(device)
-    out = net(x0, x1, x2, x3, x4, noise_map)
+    net = WNet(in_ch=3*opt.n_frames+1, out_ch=3*opt.n_frames).to(device)
+    out = net(x, noise_map)
     print(out.shape)
-    torchinfo.summary(net, input_data=[x0, x1, x2, x3, x4, noise_map])
+    torchinfo.summary(net, input_data=[x, noise_map])
     
 def check_block():
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
@@ -90,47 +95,63 @@ def check_block():
 
 
 def check_dataloader():
-    with open('config/config_unet.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test_11.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
-    train_dataset = DAVISDenoisingDataset(opt)
+    train_dataset = DAVISVideoDenoisingTrainDatasetMIMO(opt)
     train_loader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True)
 
     start = time.time()
-    for i, (imgs, gt, noise_level) in enumerate(train_loader):
-        print(imgs.shape)
-        print(gt.shape)
-        print(noise_level)
-        exit()
+
+    for i, data in enumerate(train_loader):
+        input_seq = torch.cat(data['input_seq'], dim=1)
+        gt_seq = torch.cat(data['gt_seq'], dim=1)
+        noise_map = data['noise_map']
+        print(i, input_seq.shape, gt_seq.shape, noise_map.shape)
+        
 
 def check_dataloader2():
-    with open('config/config_unet.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test_11.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
-    val_dataset = SingleVideoDenoisingTestDataset(opt, sigma=10)
-    val_loader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=False)
+    val_dataset = SingleVideoDenoisingTestDatasetMIMO(opt, sigma=10)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    print(len(val_dataset), len(val_loader), len(val_loader)*opt.n_frames)
+    # rollercoaster: 69
 
     start = time.time()
-    for i, (imgs, gt, noise_level) in enumerate(val_loader):
-        print(imgs.shape)
-        print(gt.shape)
-        print(noise_level)
-        exit()
+    for i, data in enumerate(val_loader):
+        input_seq = data['input_seq']
+        gt_seq = data['gt_seq']
+        noise_map = data['noise_map']
+        print(i, len(input_seq), input_seq[0].shape)
+        print(i, len(gt_seq), gt_seq[0].shape)
+        print(i, noise_map.shape)
+        
 
 def check_flow():
     device = torch.device('cuda')
-    with open('config/config_unet.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test_11.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
-    train_dataset = DAVISVideoDenoisingTrainDataset(opt)
+    #train_dataset = DAVISVideoDenoisingTrainDatasetMIMO(opt)
     #train_loader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    val_dataset = SingleVideoDenoisingTestDatasetMIMO(opt, sigma=10)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    print(len(val_loader))
+    print(len(val_loader)*opt.n_frames)
+    net = MultiStageNAFMIMO(opt).to(device)
 
     start = time.time()
-    for i, (imgs, gt, noise_level) in enumerate(train_loader):
-        net = VideoDenoisingNetwork(opt).to(device)
-        imgs, gt = imgs.to(device), gt.to(device)
-        out = net(imgs)
-        print(out.shape, gt.shape)
+    for i, data in enumerate(val_loader):
+    #for i, data in enumerate(train_loader):
+        input_seq = torch.cat(data['input_seq'], dim=1).to(device)
+        gt_seq = torch.cat(data['gt_seq'], dim=1).to(device)
+        noise_map = data['noise_map'].to(device)
+
+        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=8), [input_seq, gt_seq, noise_map])
+
+        #out = net(input_seq, noise_map)
+        #print(out.shape)
         break
-    torchinfo.summary(net, input_data=[imgs])
+    #torchinfo.summary(net, input_data=[input_seq, noise_map])
 
 def yoyaku():
     device = torch.device('cuda')
@@ -536,5 +557,124 @@ def compare_images():
     for i, img in enumerate(tqdm(images)):
         cv2.imwrite(os.path.join('temp', f'{i:03}.png'), img)
 
+def check_disk():
+    from utils.utils import read_img
+    import random
+
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+
+    class DAVISVideoDenoisingTrainDataset(torch.utils.data.Dataset):
+        def __init__(self, opt):
+            super().__init__()
+            assert opt.n_frames==5
+            self.n_frames = opt.n_frames
+            self.surrounding_frames = opt.n_frames//2
+            self.crop_h, self.crop_w = opt.input_resolution
+            self.sigma_range = opt.sigma_range
+
+            video_dirs = sorted([d for d in glob.glob(os.path.join(opt.dataset_path, f'*'))])
+            self.cache_data = opt.cache_data
+            
+            self.imgs = {}
+            for i, video_dir in enumerate(video_dirs):
+                start_total = time.time()
+                name = os.path.basename(video_dir)
+                images = sorted(glob.glob(os.path.join(video_dir, f'*.{opt.data_extention}')))
+                self.imgs[name] = {}
+                for j, img_path in enumerate(images):
+                    start = time.time()
+                    if self.cache_data:
+                        self.imgs[name][j] = read_img(img_path)
+                    else:
+                        self.imgs[name][j] = img_path
+                    elapsed = time.time() - start 
+                    print(f'{i},{j},{elapsed}')
+                    with open('temp/temp11.csv', mode='a', encoding='utf-8') as fp:
+                        fp.write(f'{i},{j},{elapsed}\n')
+                elapsed_total = time.time() - start_total
+                #with open('temp/temp.csv', mode='a', encoding='utf-8') as fp:
+                #    fp.write(f'{i},total,{elapsed_total}\n')
+                #print(f'{i},total,{elapsed_total}')
+            self.video_dirs = sorted(list(self.imgs.keys()))
+        
+        def set_crop_position(self, h, w):
+            top = random.randint(0, h-self.crop_h-1)
+            left = random.randint(0, w-self.crop_w-1)
+            return top, left
+        
+        def __getitem__(self, idx):
+            name = self.video_dirs[idx]
+            frame_idx = random.randint(0, len(self.video_dirs[idx])-1)
+
+            gt = self.imgs[name][frame_idx]
+            top, left = self.set_crop_position(gt.shape[1], gt.shape[2])
+            gt = TF.crop(gt, top, left, self.crop_h, self.crop_w)
+
+            sigma = ((random.random()*(self.sigma_range[1]-self.sigma_range[0])) + self.sigma_range[0]) / 255.0
+            noise_level = torch.ones((1,1,1)) * sigma
+            noise_map = noise_level.expand(1, self.crop_h, self.crop_w)
+            
+            imgs = []
+            for i in range(self.n_frames):
+                temp_idx = i + frame_idx-self.surrounding_frames
+                temp_idx = min(max(temp_idx, 0), len(self.video_dirs[idx])-1)
+                if self.cache_data:
+                    img = self.imgs[name][temp_idx]
+                else:
+                    img = read_img(self.imgs[name][temp_idx])
+                img = TF.crop(img, top, left, self.crop_h, self.crop_w)
+                noise = torch.normal(mean=0, std=noise_level.expand_as(img))
+                imgs.append(img+noise)
+
+            return imgs[0], imgs[1], imgs[2], imgs[3], imgs[4], noise_map, gt, noise_level.flatten()
+
+        def __len__(self):
+            return len(self.video_dirs)
+    
+    dataset = DAVISVideoDenoisingTrainDataset(opt)
+    
+def check_cpu():
+    images = []
+    for i in range(6000):
+        start = time.time()
+        x = (torch.rand((3,5,480,720))*255).to(torch.uint8)
+        images.append(x)
+        elapsed = time.time() - start
+        print(f'{i},{elapsed}')
+        with open('temp/temp.csv', mode='a', encoding='utf-8') as fp:
+            fp.write(f'{i},{elapsed}\n')
+
+def check_importlib():
+    import importlib
+
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    
+    module = importlib.import_module('models.network_mimo')
+    print(module)
+
+    net = getattr(module, opt['model_type'])(opt)
+
+    print(net)
+
+def check_tsm():
+    from models.network_mimo import NAFTSM
+    import torchinfo
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    layer = NAFTSM(opt).to(device)
+    # print(layer)
+    x = torch.rand((8,11,3,96,96)).to(device)
+    noise_map = torch.rand((8,1,1,96,96)).to(device)
+
+    out = layer(x, noise_map)
+
+    print(out.shape)
+
+    torchinfo.summary(layer, input_data=[x, noise_map])
+
 if __name__=='__main__':
-    check_net()
+    check_importlib()

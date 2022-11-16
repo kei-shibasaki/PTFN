@@ -22,12 +22,24 @@ def tensor2ndarray3d(tensor):
     return img
 
 def pad_tensor(x, divisible_by=8, mode='reflect'):
-    B, C, H, W = x.shape
-    nh = H//divisible_by+1 if H%divisible_by!=0 else H//divisible_by
-    nw = W//divisible_by+1 if W%divisible_by!=0 else W//divisible_by
+    if len(x.shape)==5:
+        b,f,c,h,w = x.shape
+        x = x.reshape(b*f,c,h,w)
+    else:
+        f = None
+        _,_,h,w = x.shape
+    
+    nh = h//divisible_by+1 if h%divisible_by!=0 else h//divisible_by
+    nw = w//divisible_by+1 if w%divisible_by!=0 else w//divisible_by
     nh, nw = int(nh*divisible_by), int(nw*divisible_by)
-    pad_h, pad_w = nh-H, nw-W
-    return F.pad(x, [0,pad_w,0,pad_h], mode)
+    pad_h, pad_w = nh-h, nw-w
+
+    x = F.pad(x, [0,pad_w,0,pad_h], mode)
+
+    if f is not None:
+        x = x.reshape(b,f,c,nh,nw)
+
+    return x
 
 
 def read_img(path):

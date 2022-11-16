@@ -24,7 +24,7 @@ def plot_losses(opt_paths, a):
         
         plt.figure()
         plt.plot(train_log['step'], smoothing(train_log['loss_G'], a), label=f'train_loss_G', alpha=0.75)
-        plt.ylim(top=0.005, bottom=0.0)
+        plt.ylim(top=-30, bottom=-40)
         plt.xlabel('Steps')
         plt.ylabel('Loss Value')
         plt.legend()

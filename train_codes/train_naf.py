@@ -15,7 +15,7 @@ from torch.nn import functional as F
 
 from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset
 from metrics import calculate_psnr, calculate_ssim
-from models.network import NAFDenoisingNet
+from models.network import MultiStageNAF2
 from utils.utils import load_option, pad_tensor, tensor2ndarray, send_line_notify
 from losses import PSNRLoss
 
@@ -40,14 +40,15 @@ def train(opt_path):
         fp.write('')
     with open(f'{log_dir}/train_losses_{model_name}.csv', mode='w', encoding='utf-8') as fp:
         fp.write('step,lr,loss_G\n')
-    for sigma in [10,20,30,40,50]:
+    #for sigma in [10,20,30,40,50]:
+    for sigma in [50]:
         with open(f'{log_dir}/test_losses_{model_name}_{sigma}.csv', mode='w', encoding='utf-8') as fp:
             fp.write('step,loss_G,psnr,ssim\n')
     
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    netG = NAFDenoisingNet(opt).to(device)
+    netG = MultiStageNAF2(opt).to(device)
     if opt.pretrained_path:
         netG_state_dict = torch.load(opt.pretrained_path, map_location=device)
         netG_state_dict = netG_state_dict['netG_state_dict']
@@ -59,7 +60,8 @@ def train(opt_path):
     train_dataset = DAVISVideoDenoisingTrainDataset(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loaders = {}
-    for sigma in [10,20,30,40,50]:
+    #for sigma in [10,20,30,40,50]:
+    for sigma in [50]:
         val_dataset = SingleVideoDenoisingTestDataset(opt, sigma)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
         val_loaders[sigma] = val_loader
@@ -107,7 +109,8 @@ def train(opt_path):
             if total_step%eval_freq==0:
                 # Validation
                 netG.eval()
-                for sigma in [10,20,30,40,50]:
+                #for sigma in [10,20,30,40,50]:
+                for sigma in [50]:
                     val_loader = val_loaders[sigma]
                     psnr = 0.0
                     ssim = 0.0
