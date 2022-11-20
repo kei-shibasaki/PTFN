@@ -665,9 +665,12 @@ def check_tsm():
     device = torch.device('cuda')
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
+    opt.batch_size = 2
+    opt.n_frames = 2
+    res = 480
     layer = NAFTSM(opt).to(device)
     # print(layer)
-    b,f,c,h,w = 8,11,3,96,96
+    b,f,c,h,w = opt.batch_size,opt.n_frames,3,res,res
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
 
@@ -779,4 +782,4 @@ def check_flow2():
     #torchinfo.summary(net, input_data=[input_seq, noise_map])
 
 if __name__=='__main__':
-    check_tsm()
+    check_flow2()

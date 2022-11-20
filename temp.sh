@@ -31,7 +31,7 @@ CUDA_VISIBLE_DEVICES=1 python -m eval_codes.gen_temp -c experiments/fastdvd_leve
 CUDA_VISIBLE_DEVICES=7 python -m eval_codes.generate_images_ex1 -c experiments/wiener/config_test.json
 
 
-python -m eval_codes.visualize_losses -c experiments/naf_small/config_test2.json
+python -m eval_codes.visualize_losses_sigma50 -c experiments/naf_small_mod2/config_test.json
 python -m eval_codes.visualize_losses -c experiments/fastdvd2/config_test3.json
 python -m eval_codes.evaluation -c experiments/fastdvd2/config_test3.json
 python -m eval_codes.evaluation -c experiments/fastdvdM/config_M.json
