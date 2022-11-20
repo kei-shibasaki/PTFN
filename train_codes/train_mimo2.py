@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import time
+import importlib
 
 import numpy as np
 import torch
@@ -13,10 +14,9 @@ from easydict import EasyDict
 from PIL import Image
 from torch.nn import functional as F
 
-from dataloader import DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
+from dataloader import DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDataset
 from metrics import calculate_psnr, calculate_ssim
-from models.network import MultiStageNAFMIMO2
-from utils.utils import load_option, pad_tensor, tensor2ndarray, send_line_notify
+from utils.utils import load_option, pad_tensor, tensor2ndarray, send_line_notify, convert_state_dict
 from losses import PSNRLoss
 
 def train(opt_path):
@@ -48,7 +48,9 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    netG = MultiStageNAFMIMO2(opt).to(device)
+    network_module = importlib.import_module('models.network_mimo2')
+    netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
+    netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     if opt.pretrained_path:
         netG_state_dict = torch.load(opt.pretrained_path, map_location=device)
         netG_state_dict = netG_state_dict['netG_state_dict']
@@ -62,25 +64,28 @@ def train(opt_path):
     val_loaders = {}
     #for sigma in [10,20,30,40,50]:
     for sigma in [50]:
-        val_dataset = SingleVideoDenoisingTestDatasetMIMO(opt, sigma)
+        val_dataset = SingleVideoDenoisingTestDataset(opt, sigma)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
         val_loaders[sigma] = val_loader
 
     print('Start Training')
     start_time = time.time()
     total_step = 0
+    best_psnr = -float('inf')
     netG.train()
     for e in range(1, 42*opt.steps):
         for i, data in enumerate(train_loader):
-            input_seq = torch.cat(data['input_seq'], dim=1).to(device)
-            gt_seq = torch.cat(data['gt_seq'], dim=1).to(device)
-            noise_map = data['noise_map'].to(device)
-            # input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=8), [input_seq, gt_seq, noise_map])
+            # [(B,C,H,W)]*F -> (B,F,C,H,W)
+            input_seq = torch.stack(data['input_seq'], dim=1).to(device)
+            gt_seq = torch.stack(data['gt_seq'], dim=1).to(device)
+            noise_map = data['noise_map'].unsqueeze(1).to(device)
+
+            b,f,c,h,w = input_seq.shape
             
             # Training G
             netG.zero_grad()
             gen = netG(input_seq, noise_map)
-            loss_G = loss_fn(gen, gt_seq)
+            loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
 
             loss_G.backward()
             if opt.use_grad_clip:
@@ -92,7 +97,8 @@ def train(opt_path):
             schedulerG.step()
 
             if total_step%eval_freq==0:
-                imgs, gens, gts = map(lambda x: x.chunk(opt.n_frames, dim=1), [input_seq, gen, gt_seq])
+                # (B,F,C,H,W) -> [(B,C,H,W)]*F
+                imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
                 imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
                 gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
                 gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
@@ -106,7 +112,6 @@ def train(opt_path):
                     compare_img.paste(gt, box=(2*img.width, 0))
                     compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'train_{i:03}_{j:03}.png'), 'PNG')
 
-            
             if total_step%1==0:
                 lr_G = [group['lr'] for group in optimG.param_groups]
                 with open(f'{log_dir}/train_losses_{model_name}.csv', mode='a', encoding='utf-8') as fp:
@@ -123,24 +128,30 @@ def train(opt_path):
                 print(lg)
                 with open(f'{log_dir}/log_{model_name}.log', mode='a', encoding='utf-8') as fp:
                     fp.write(lg+'\n')
-            
+
             if total_step%eval_freq==0:
                 # Validation
-                netG.eval()
+                netG_val.load_state_dict(convert_state_dict(netG.state_dict()), strict=True)
+                netG_val.eval()
                 #for sigma in [10,20,30,40,50]:
                 for sigma in [50]:
                     val_loader = val_loaders[sigma]
                     psnr, ssim, loss_G = 0.0, 0.0, 0.0
                     for i, data in enumerate(val_loader):
-                        input_seq = torch.cat(data['input_seq'], dim=1).to(device)
-                        gt_seq = torch.cat(data['gt_seq'], dim=1).to(device)
-                        noise_map = data['noise_map'].to(device)
-                        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=16), [input_seq, gt_seq, noise_map])
+                        # [(B,C,H,W)]*F -> (B,F,C,H,W)
+                        input_seq = torch.cat(data['input_seq'], dim=0).unsqueeze(0).to(device)
+                        gt_seq = torch.cat(data['gt_seq'], dim=0).unsqueeze(0).to(device)
+                        noise_map = data['noise_map'].unsqueeze(1).to(device)
+                        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=8), [input_seq, gt_seq, noise_map])
+                        b,f,c,h,w = input_seq.shape
                         with torch.no_grad():
-                            gen = netG(input_seq, noise_map)
-                            loss_G += loss_fn(gen, gt_seq)
+                            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                                gen = netG_val(input_seq, noise_map)
+                                loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
                         
-                        imgs, gens, gts = map(lambda x: x.chunk(opt.n_frames, dim=1), [input_seq, gen, gt_seq])
+                        # (B,F,C,H,W) -> [(B,C,H,W)]*F
+                        imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
+                        
                         imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
                         gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
                         gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
@@ -158,9 +169,9 @@ def train(opt_path):
                             compare_img.paste(gt, box=(2*img.width, 0))
                             compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'{i:03}_{j:03}.png'), 'PNG')
                     
-                    loss_G = loss_G / len(val_loader)
-                    psnr = psnr / (len(val_loader)*opt.n_frames)
-                    ssim = ssim / (len(val_loader)*opt.n_frames)
+                    #loss_G = loss_G
+                    psnr = psnr / f
+                    ssim = ssim / f
                 
                     txt = f'sigma: {sigma}, loss_G: {loss_G:f}, PSNR: {psnr:f}, SSIM: {ssim:f}'
                     print(txt)
@@ -168,12 +179,21 @@ def train(opt_path):
                         fp.write(txt+'\n')
                     with open(f'{log_dir}/test_losses_{model_name}_{sigma}.csv', mode='a', encoding='utf-8') as fp:
                         fp.write(f'{total_step},{loss_G:f},{psnr:f},{ssim:f}\n')
+                    
+                    if psnr >= best_psnr:
+                        best_psnr = psnr
+                        torch.save({
+                            'total_step': total_step,
+                            'netG_state_dict': netG.state_dict(),
+                            'optimG_state_dict': optimG.state_dict(),
+                        }, os.path.join(model_ckpt_dir, f'{model_name}_best.ckpt'))
+
                 
                 if total_step%opt.save_freq==0 and opt.enable_line_nortify:
                     with open('line_nortify_token.json', 'r', encoding='utf-8') as fp:
                         token = json.load(fp)['token']
                     send_line_notify(token, f'{opt.name} Step: {total_step}\n{lg}\n{txt}')
-
+            
             if total_step%opt.save_freq==0:
                 torch.save({
                     'total_step': total_step,
@@ -182,6 +202,12 @@ def train(opt_path):
                 }, os.path.join(model_ckpt_dir, f'{model_name}_{str(total_step).zfill(len(str(opt.steps)))}.ckpt'))
                     
             if total_step==opt.steps:
+                torch.save({
+                    'total_step': total_step,
+                    'netG_state_dict': netG.state_dict(),
+                    'optimG_state_dict': optimG.state_dict(),
+                }, os.path.join(model_ckpt_dir, f'{model_name}_{str(total_step).zfill(len(str(opt.steps)))}.ckpt'))
+
                 if opt.enable_line_nortify:
                     with open('line_nortify_token.json', 'r', encoding='utf-8') as fp:
                         token = json.load(fp)['token']

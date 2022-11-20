@@ -16,7 +16,6 @@ from torch.nn import functional as F
 
 from dataloader import DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
 from metrics import calculate_psnr, calculate_ssim
-from models.network import MultiStageNAFMIMO
 from utils.utils import load_option, pad_tensor, tensor2ndarray, send_line_notify
 from losses import PSNRLoss
 

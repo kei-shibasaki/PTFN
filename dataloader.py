@@ -221,3 +221,31 @@ class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.imgs)
+
+
+class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
+    def __init__(self, opt, sigma):
+        super().__init__()
+        self.n_frames = opt.n_frames
+        self.sigma = sigma / 255.0
+        self.noise_level = torch.ones((1,1,1)) * self.sigma
+        
+        video_dir = opt.val_dataset_path
+        
+        self.imgs = []
+        self.noise_imgs = []
+        images = sorted(glob.glob(os.path.join(video_dir, f'*.{opt.data_extention}')))
+
+        for i, img_path in enumerate(images):
+            img = read_img(img_path)
+            noise = torch.normal(mean=0, std=self.noise_level.expand_as(img))
+            self.imgs.append(img)
+            self.noise_imgs.append(img+noise)
+        
+        self.noise_map = self.noise_level.expand(1, self.imgs[0].shape[1], self.imgs[0].shape[2])
+    
+    def __getitem__(self, idx):
+        return {'input_seq': self.noise_imgs, 'gt_seq': self.imgs, 'noise_map': self.noise_map}
+
+    def __len__(self):
+        return 1

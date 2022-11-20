@@ -660,21 +660,123 @@ def check_importlib():
     print(net)
 
 def check_tsm():
-    from models.network_mimo import NAFTSM
+    from models.network_mimo2 import NAFTSM
     import torchinfo
     device = torch.device('cuda')
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     layer = NAFTSM(opt).to(device)
     # print(layer)
-    x = torch.rand((8,11,3,96,96)).to(device)
-    noise_map = torch.rand((8,1,1,96,96)).to(device)
+    b,f,c,h,w = 8,11,3,96,96
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
 
     out = layer(x, noise_map)
 
     print(out.shape)
+    print(layer)
 
     torchinfo.summary(layer, input_data=[x, noise_map])
 
+def check_bbb():
+    from models.network_mimo2 import NAFBBB
+    import torchinfo
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    layer = NAFBBB(opt).to(device)
+
+    b,f,c,h,w = 1,11,3,96,96
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
+
+    out = layer(x, noise_map)
+
+    print(out.shape)
+    print(layer)
+
+    #torchinfo.summary(layer, input_data=[x, noise_map])
+
+def check_state_dict():
+    import torch 
+    device = torch.device('cuda')
+    checkpoint = torch.load('experiments/naf_tsm/ckpt/naf_tsm_250000.ckpt', map_location=device)
+    
+    for key, value in checkpoint['netG_state_dict'].items():
+        print(key, value.shape)
+
+def check_load_model():
+    from models.network_mimo2 import NAFTSM, NAFBBB
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+
+    #layer = NAFTSM(opt).to(device)
+    #torch.save(layer.state_dict(), 'temp.pth')
+
+    layer = NAFBBB(opt).to(device)
+    state_dict = torch.load('temp.pth', map_location=device)
+    layer.load_state_dict(state_dict, strict=True)
+
+def check_flow2():
+    from models.network_mimo2 import NAFTSM, NAFBBB
+    from utils.utils import convert_state_dict
+    from collections import OrderedDict
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    #val_dataset = SingleVideoDenoisingTestDataset(opt, sigma=50)
+    val_dataset = SingleVideoDenoisingTestDataset(opt, sigma=50)
+
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    net = NAFBBB(opt).to(device)
+    ckpt_path = 'experiments/naf_tsm2/ckpt/naf_tsm2_400000.ckpt'
+    state_dict = torch.load(ckpt_path, map_location=device)
+    state_dict = state_dict['netG_state_dict']
+    new_state_dict = convert_state_dict(state_dict)
+
+    net.load_state_dict(new_state_dict, strict=True)
+
+    start = time.time()
+    for i, data in enumerate(val_loader):
+        input_seq = torch.cat(data['input_seq'], dim=0).unsqueeze(0).to(device)
+        gt_seq = torch.cat(data['gt_seq'], dim=0).unsqueeze(0).to(device)
+        noise_map = data['noise_map'].unsqueeze(1).to(device)
+
+        # input_seq = (torch.arange(0,13685760, dtype=torch.float32, device=device) / 13685760).reshape(1,11,3,480,864)
+
+        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=16), [input_seq, gt_seq, noise_map])
+
+        # print(input_seq.shape, gt_seq.shape, noise_map.shape)
+
+        with torch.no_grad():
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                gen = net(input_seq, noise_map)
+        
+        mse = torch.mean((gen-gt_seq)**2)
+        print(20*torch.log10(1/mse**0.5))
+        # 33.1216 vs 33.1262
+        exit()
+
+        # (B,F,C,H,W) -> [(B,C,H,W)]*F
+        imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
+        
+        imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
+        gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
+        gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
+
+        for j, (img, gen, gt) in enumerate(zip(imgs, gens, gts)):
+            # Visualization
+            img, gen, gt = map(lambda x: Image.fromarray(x), [img, gen, gt])
+            compare_img = Image.new('RGB', size=(3*img.width, img.height), color=0)
+            compare_img.paste(img, box=(0, 0))
+            compare_img.paste(gen, box=(img.width, 0))
+            compare_img.paste(gt, box=(2*img.width, 0))
+            compare_img.save(os.path.join('temp', f'{j:03}.png'), 'PNG')
+        exit()
+        
+
+    #torchinfo.summary(net, input_data=[input_seq, noise_map])
+
 if __name__=='__main__':
-    check_importlib()
+    check_tsm()

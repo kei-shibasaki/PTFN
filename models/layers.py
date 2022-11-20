@@ -94,86 +94,171 @@ class NAFBlock(nn.Module):
 
         return y + x * self.gamma
 
-class NAFNet(nn.Module):
-    def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[]):
+class ShiftNAFBlock(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel, bias=True)
+        self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        # Simplified Channel Attention
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+        )
+        # SimpleGate
+        self.sg = SimpleGate()
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
 
-        self.intro = nn.Conv2d(in_channels=img_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=width, out_channels=img_channel, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
+        self.norm1 = LayerNorm2d(c)
+        self.norm2 = LayerNorm2d(c)
 
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
 
-        chan = width
-        for num in enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
-            chan = chan * 2
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(middle_blk_num)]
-            )
+    def forward(self,  left_fold_2fold, center, right):
+        fold_div = 8
+        n, c, h, w = center.size()
+        fold = c//fold_div
+        inp = torch.cat([right[:, :fold, :, :], left_fold_2fold, center[:, 2*fold:, :, :]], dim=1)
+        x = inp
 
-        for num in dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
-            chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
+        x = self.norm1(x)
 
-        self.padder_size = 2 ** len(self.encoders)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.sg(x)
+        x = x * self.sca(x)
+        x = self.conv3(x)
 
-    def forward(self, inp):
-        B, C, H, W = inp.shape
-        inp = self.check_image_size(inp)
+        x = self.dropout1(x)
 
-        x = self.intro(inp)
+        y = inp + x * self.beta
 
-        encs = []
+        x = self.conv4(self.norm2(y))
+        x = self.sg(x)
+        x = self.conv5(x)
 
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
+        x = self.dropout2(x)
 
-        x = self.middle_blks(x)
+        return y + x * self.gamma
 
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
+class TemporalShift(nn.Module):
+    def __init__(self, n_segment, shift_type, fold_div=3, stride=1):
+        super().__init__()
+        self.n_segment = n_segment
+        self.shift_type = shift_type
+        self.fold_div = fold_div
+        self.stride = stride 
 
-        x = self.ending(x)
-        x = x + inp
+    def forward(self, x):
+        nt, c, h, w = x.size()
+        n_batch = nt // self.n_segment
+        x = x.view(n_batch, self.n_segment, c, h, w)
 
-        return x[:, :, :H, :W]
+        fold = c // self.fold_div # 32/8 = 4
+        
+        out = torch.zeros_like(x)
+        if not 'toFutureOnly' in self.shift_type:
+            out[:, :-self.stride, :fold] = x[:, self.stride:, :fold]  # backward (left shift)
+            out[:, self.stride:, fold: 2 * fold] = x[:, :-self.stride, fold: 2 * fold]  # forward (right shift)
+        else:
+            out[:, self.stride:, : 2 * fold] = x[:, :-self.stride, : 2 * fold] # right shift only
+        out[:, :, 2 * fold:] = x[:, :, 2 * fold:]  # not shift
 
-    def check_image_size(self, x):
-        _, _, h, w = x.size()
-        mod_pad_h = (self.padder_size - h % self.padder_size) % self.padder_size
-        mod_pad_w = (self.padder_size - w % self.padder_size) % self.padder_size
-        x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
-        return x
+        return out.view(nt, c, h, w)
 
+class BidirectionalBufferBlock(nn.Module):
+    def __init__(self, fold_div):
+        super().__init__()
+        self.fold_div = fold_div
+        self.left_fold_2fold = None
+        self.center = None
+    
+    def reset(self):
+        self.left_fold_2fold = None
+        self.center = None
+    
+    def set_init_buffer(self, input_right):
+        if input_right is not None:
+            self.n, self.c, self.h, self.w = input_right.size()
+            self.fold = self.c//self.fold_div
+            self.center = input_right
+            self.left_fold_2fold = torch.zeros((self.n, self.fold, self.h, self.w), device=input_right.device)
+        return None
+    
+    def update_buffer(self, input_right):
+        if self.center is not None:
+            self.left_fold_2fold = self.center[:, self.fold:2*self.fold, :, :]
+            self.center = input_right
+    
+    def forward(self, input_right):
+        if self.center is None:
+            output = self.set_init_buffer(input_right)
+        elif input_right is None:
+            output = torch.cat([
+                torch.zeros((self.n, self.fold, self.h, self.w), device=self.left_fold_2fold.device), 
+                self.left_fold_2fold, 
+                self.center[:, 2*self.fold:, :, :]
+            ], dim=1)
+        else:
+            output = torch.cat([
+                input_right[:, :self.fold, :, :], 
+                self.left_fold_2fold, 
+                self.center[:, 2*self.fold:, :, :]
+            ], dim=1)
+        
+        return output
+
+class NAFBlockBBB(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        super(NAFBlockBBB, self).__init__()
+        self.op = ShiftNAFBlock(c, DW_Expand, FFN_Expand, drop_out_rate)
+        self.out_channels = c
+        self.left_fold_2fold = None
+        self.center = None
+        
+    def reset(self):
+        self.left_fold_2fold = None
+        self.center = None
+        
+    def forward(self, input_right, verbose=False):
+        fold_div = 8
+        if input_right is not None:
+            self.n, self.c, self.h, self.w = input_right.size()
+            self.fold = self.c//fold_div
+        # Case1: In the start or end stage, the memory is empty
+        if self.center is None:
+            self.center = input_right
+            if input_right is not None:
+                if self.left_fold_2fold is None:
+                    # In the start stage, the memory and left tensor is empty
+                    self.left_fold_2fold = torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda'))
+                if verbose: print("%f+none+%f = none"%(torch.mean(self.left_fold_2fold), torch.mean(input_right)))
+            else:
+                # in the end stage, both feed in and memory are empty
+                if verbose: print("%f+none+none = none"%(torch.mean(self.left_fold_2fold)))
+                # print("self.center is None")
+            return None
+        # Case2: Center is not None, but input_right is None
+        elif input_right is None:
+            # In the last procesing stage, center is 0
+            output =  self.op(self.left_fold_2fold, self.center, torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda')))
+            if verbose: print("%f+%f+none = %f"%(torch.mean(self.left_fold_2fold), torch.mean(self.center), torch.mean(output)))
+        else:
+            
+            output =  self.op(self.left_fold_2fold, self.center, input_right)
+            if verbose: print("%f+%f+%f = %f"%(torch.mean(self.left_fold_2fold), torch.mean(self.center), torch.mean(input_right), torch.mean(output)))
+        self.left_fold_2fold = self.center[:, self.fold:2*self.fold, :, :]
+        self.center = input_right
+        return output
+        
 class MotionCompensationAttention(nn.Module):
     def __init__(self, dim, kernel_size=3):
         super().__init__()
@@ -193,6 +278,22 @@ class MotionCompensationAttention2(nn.Module):
         x = self.gap(x)
         x = self.conv(x)
         return a * x
+
+class MemSkip(nn.Module):
+    def __init__(self):
+        super(MemSkip, self).__init__()
+        self.mem_list = []
+    def push(self, x):
+        if x is not None:
+            self.mem_list.insert(0,x)
+            return 1
+        else:
+            return 0
+    def pop(self, x):
+        if x is not None:
+            return self.mem_list.pop()
+        else:
+            return None
 
 ###
 class ChanLayerNorm(nn.Module):

@@ -7,6 +7,7 @@ import requests
 import cv2
 import glob
 import math
+from collections import OrderedDict
 
 def load_option(opt_path):
     with open(opt_path, 'r') as json_file:
@@ -116,3 +117,19 @@ def send_line_notify(line_notify_token, nortification_message):
     headers = {'Authorization': f'Bearer {line_notify_token}'}
     data = {'message': f'{nortification_message}'}
     requests.post(line_notify_api, headers=headers, data=data)
+
+def convert_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    keys, values = [], []
+    for key, value in state_dict.items():
+        if 'block' in key:
+            temp = key.split('.')
+            temp.insert(2, 'op')
+            key = '.'.join(temp)
+        keys.append(key)
+        values.append(value)
+    
+    for key, value in zip(keys, values):
+        new_state_dict[key] = value
+    
+    return new_state_dict
