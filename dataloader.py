@@ -42,8 +42,8 @@ class DAVISVideoDenoisingTrainDataset(torch.utils.data.Dataset):
         self.video_dirs = sorted(list(self.imgs.keys()))
     
     def set_crop_position(self, h, w):
-        top = random.randint(0, h-self.crop_h-1)
-        left = random.randint(0, w-self.crop_w-1)
+        top = random.randint(0, h-self.crop_h-1) if h-self.crop_h-1>=0 else 0
+        left = random.randint(0, w-self.crop_w-1) if w-self.crop_w-1>=0 else 0
         return top, left
     
     def __getitem__(self, idx):
@@ -82,6 +82,9 @@ class DAVISVideoDenoisingTrainDatasetMIMO(torch.utils.data.Dataset):
         self.surrounding_frames = opt.n_frames//2
         self.crop_h, self.crop_w = opt.input_resolution
         self.sigma_range = opt.sigma_range
+        self.random_flip = opt.random_flip
+        self.random_rotate_range = opt.random_rotate_range
+        self.rot_interp_mode = torchvision.transforms.InterpolationMode.BILINEAR
 
         video_dirs = sorted([d for d in glob.glob(os.path.join(opt.dataset_path, f'*'))])
         self.cache_data = opt.cache_data
@@ -98,9 +101,14 @@ class DAVISVideoDenoisingTrainDatasetMIMO(torch.utils.data.Dataset):
                     self.imgs[name][j] = img_path
         self.video_dirs = sorted(list(self.imgs.keys()))
     
+    def change_configs(self, n_frames, input_resolution):
+        self.n_frames = n_frames
+        self.surrounding_frames = n_frames//2
+        self.crop_h, self.crop_w = input_resolution
+
     def set_crop_position(self, h, w):
-        top = random.randint(0, h-self.crop_h-1)
-        left = random.randint(0, w-self.crop_w-1)
+        top = random.randint(0, h-self.crop_h-1) if h-self.crop_h-1>=0 else 0
+        left = random.randint(0, w-self.crop_w-1) if w-self.crop_w-1>=0 else 0
         return top, left
     
     def __getitem__(self, idx):
@@ -109,6 +117,9 @@ class DAVISVideoDenoisingTrainDatasetMIMO(torch.utils.data.Dataset):
 
         temp = self.imgs[name][frame_idx]
         top, left = self.set_crop_position(temp.shape[1], temp.shape[2])
+        a_min, a_max = self.random_rotate_range
+        angle = random.random() * (a_max-a_min) + a_min
+        use_flip = random.random()>0.5 if self.random_flip else False
 
         sigma = ((random.random()*(self.sigma_range[1]-self.sigma_range[0])) + self.sigma_range[0]) / 255.0
         noise_level = torch.ones((1,1,1)) * sigma
@@ -126,10 +137,15 @@ class DAVISVideoDenoisingTrainDatasetMIMO(torch.utils.data.Dataset):
                 img = read_img(self.imgs[name][temp_idx])
             img = TF.crop(img, top, left, self.crop_h, self.crop_w)
             noise = torch.normal(mean=0, std=noise_level.expand_as(img))
+            img_n = img + noise
+            if use_flip:
+                img = TF.hflip(img)
+                img_n = TF.hflip(img_n)
+            img = TF.rotate(img, angle, self.rot_interp_mode)
+            img_n = TF.rotate(img_n, angle, self.rot_interp_mode)
             gts.append(img)
-            imgs.append(img+noise)
+            imgs.append(img_n)
 
-        #return imgs[0], imgs[1], imgs[2], imgs[3], imgs[4], noise_map
         return {'input_seq': imgs, 'gt_seq': gts, 'noise_map': noise_map}
 
     def __len__(self):

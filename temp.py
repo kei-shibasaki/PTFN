@@ -665,21 +665,41 @@ def check_tsm():
     device = torch.device('cuda')
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
-    opt.batch_size = 2
-    opt.n_frames = 2
-    res = 480
-    layer = NAFTSM(opt).to(device)
-    # print(layer)
+    opt.batch_size = 8
+    opt.n_frames = 11
+    res = 32
+    netG = NAFTSM(opt).to(device)
+    optimG = torch.optim.Adam(netG.parameters(), lr=0.01, betas=[0.9,0.9])
+    optimG_state_dict = optimG.state_dict()
+    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=5, eta_min=1e-7)
+    lr_G = [group['lr'] for group in optimG.param_groups]
+    print(optimG_state_dict)
+    for _ in range(4): schedulerG.step()
+
+    lr_G = [group['lr'] for group in optimG.param_groups]
+    print(lr_G[0])
+
+    optimG = torch.optim.Adam(netG.parameters(), lr=0.01, betas=[0.9,0.9])
+    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=5, eta_min=1e-7)
+    optimG.load_state_dict(optimG_state_dict)
+    print(optimG.state_dict())
+
+    for _ in range(4): schedulerG.step()
+
+    lr_G = [group['lr'] for group in optimG.param_groups]
+    print(lr_G[0])
+
     b,f,c,h,w = opt.batch_size,opt.n_frames,3,res,res
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
 
-    out = layer(x, noise_map)
+    #out = netG(x, noise_map)
 
-    print(out.shape)
-    print(layer)
+    #print(out.shape)
+    #print(netG)
 
-    torchinfo.summary(layer, input_data=[x, noise_map])
+    #torchinfo.summary(netG, input_data=[x, noise_map])
+
 
 def check_bbb():
     from models.network_mimo2 import NAFBBB
@@ -703,7 +723,7 @@ def check_bbb():
 def check_state_dict():
     import torch 
     device = torch.device('cuda')
-    checkpoint = torch.load('experiments/naf_tsm/ckpt/naf_tsm_250000.ckpt', map_location=device)
+    checkpoint = torch.load('experiments/naf_tsm/ckpt/naf_tsm2_400000.ckpt', map_location=device)
     
     for key, value in checkpoint['netG_state_dict'].items():
         print(key, value.shape)
@@ -713,13 +733,20 @@ def check_load_model():
     device = torch.device('cuda')
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
+    
+    opt.n_frames = 5
+    layer = NAFTSM(opt).to(device)
+    state_dict = torch.load('experiments/naf_tsm2/ckpt/naf_tsm2_400000.ckpt', map_location=device)
+    layer.load_state_dict(state_dict['netG_state_dict'], strict=True)
+    
+    res = 32
+    b,f,c,h,w = opt.batch_size,opt.n_frames,3,res,res
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
 
-    #layer = NAFTSM(opt).to(device)
-    #torch.save(layer.state_dict(), 'temp.pth')
+    out = layer(x, noise_map)
 
-    layer = NAFBBB(opt).to(device)
-    state_dict = torch.load('temp.pth', map_location=device)
-    layer.load_state_dict(state_dict, strict=True)
+    print(out.shape)
 
 def check_flow2():
     from models.network_mimo2 import NAFTSM, NAFBBB
@@ -781,5 +808,20 @@ def check_flow2():
 
     #torchinfo.summary(net, input_data=[input_seq, noise_map])
 
+def check_state_dict2():
+    from models.network_mimo2 import NAFTSM, NAFBBB
+    from utils.utils import convert_state_dict
+    from collections import OrderedDict
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+
+    netG = NAFTSM(opt).to(device)
+    netG = nn.DataParallel(netG, device_ids=[0,1])
+
+    state_dict = netG.module.state_dict()
+    for key, value in state_dict.items():
+        print(key, value.shape)
+
 if __name__=='__main__':
-    check_flow2()
+    check_tsm()

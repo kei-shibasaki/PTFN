@@ -1,8 +1,8 @@
 # TODO
 - random rotateとhorizontal flipに対応させる
 - 70K Stepの学習
-- モジュールの追加
 - バッチサイズ、画像サイズ、フレーム数を途中で変えて学習できるようにする
+- モジュールの追加
 
 |Batch/GPU|Resolution|#frames|#Iter|
 |---:|---:|---:|---:|
