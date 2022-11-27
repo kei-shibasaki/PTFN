@@ -55,8 +55,8 @@ def train(opt_path):
     netG = nn.DataParallel(netG, device_ids=[0,1])
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
-    #schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
-    schedulerG = torch.optim.lr_scheduler.MultiStepLR(optimG, milestones=opt.milestones, gamma=opt.gamma)
+    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
+    #schedulerG = torch.optim.lr_scheduler.MultiStepLR(optimG, milestones=opt.milestones, gamma=opt.gamma)
     train_dataset = DAVISVideoDenoisingTrainDatasetMIMO(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 

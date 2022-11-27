@@ -15,10 +15,9 @@ from metrics import calculate_psnr, calculate_ssim
 import cv2
 import time
 
-from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter, MotionCompensationAttention2
+#from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter, MotionCompensationAttention2
 from models.network import *
-from models.networkM import FastDVDNetM, TinyDenoisingBlock, TinyDenoisingBlockSingle, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
-from models.wnet_models import WNet
+#from models.networkM import FastDVDNetM, TinyDenoisingBlock, TinyDenoisingBlockSingle, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
 from utils.utils import pad_tensor, tensor2ndarray, read_img
 from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset, DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
 
@@ -57,23 +56,20 @@ def check_lap():
 
 
 def check_net():
-    with open('config/config_test_11.json', 'r', encoding='utf-8') as fp:
-        opt = EasyDict(json.load(fp))
+    from models.wnet import TSN
+    from models.wnet_bsvd import BSVD
     device = torch.device('cuda')
     # x = torch.rand((1,16,128,128)).to(device)
     b = 8
+    f = 11
     h, w = 96, 96
-    x0 = torch.rand((b,3,h,w)).to(device)
-    x1 = torch.rand((b,3,h,w)).to(device)
-    x2 = torch.rand((b,3,h,w)).to(device)
-    x3 = torch.rand((b,3,h,w)).to(device)
-    x4 = torch.rand((b,3,h,w)).to(device)
-    x = torch.rand((b,3*opt.n_frames,h,w)).to(device)
-    noise_map = torch.rand((b,1,h,w)).to(device)
-    net = WNet(in_ch=3*opt.n_frames+1, out_ch=3*opt.n_frames).to(device)
-    out = net(x, noise_map)
+    x = torch.rand((b,f,3,h,w)).to(device)
+    noise_map = torch.rand((b,f,1,h,w)).to(device)
+    x = torch.cat([x, noise_map], dim=2)
+    net = BSVD(pretrain_ckpt=None).to(device)
+    out = net(x)
     print(out.shape)
-    torchinfo.summary(net, input_data=[x, noise_map])
+    torchinfo.summary(net, input_data=[x])
     
 def check_block():
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
@@ -372,12 +368,20 @@ def check_img2():
 def check_gif():
     from PIL import Image
     import glob
-    img_paths = sorted(glob.glob('results/fastdvd_level5/rollercoaster/generated/50/*.png'))
+    img_paths1 = sorted(glob.glob('results/naf_small_mod2/car-race/input/50/*.png'))
+    img_paths2 = sorted(glob.glob('results/naf_small_mod2/car-race/generated/50/*.png'))
+    print(len(img_paths1), len(img_paths2))
 
     images = []
-    for i, img_path in enumerate(img_paths):
-        with Image.open(img_path) as img:
-            img = img.convert('RGB')
+    for i, (img_path1, img_path2) in enumerate(zip(img_paths1, img_paths2)):
+        with Image.open(img_path1) as img1, Image.open(img_path2) as img2:
+            img1 = img1.convert('RGB')
+            img2 = img2.convert('RGB')
+            w, h = img1.size
+            img1, img2 = img1.crop([0,0,w//2,h]), img2.crop([w//2,0,w,h])
+            img = Image.new('RGB', size=[w,h], color=0)
+            img.paste(img1, [0,0])
+            img.paste(img2, [w//2,0])
             if i==0: 
                 first_img = img
                 continue
@@ -660,42 +664,23 @@ def check_importlib():
     print(net)
 
 def check_tsm():
-    from models.network_mimo2 import NAFTSM
+    from models.network_mimo3 import NAFTSM
     import torchinfo
     device = torch.device('cuda')
-    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_test3.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
-    opt.batch_size = 8
+    opt.batch_size = 2
     opt.n_frames = 11
-    res = 32
+    res = 96
     netG = NAFTSM(opt).to(device)
-    optimG = torch.optim.Adam(netG.parameters(), lr=0.01, betas=[0.9,0.9])
-    optimG_state_dict = optimG.state_dict()
-    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=5, eta_min=1e-7)
-    lr_G = [group['lr'] for group in optimG.param_groups]
-    print(optimG_state_dict)
-    for _ in range(4): schedulerG.step()
-
-    lr_G = [group['lr'] for group in optimG.param_groups]
-    print(lr_G[0])
-
-    optimG = torch.optim.Adam(netG.parameters(), lr=0.01, betas=[0.9,0.9])
-    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=5, eta_min=1e-7)
-    optimG.load_state_dict(optimG_state_dict)
-    print(optimG.state_dict())
-
-    for _ in range(4): schedulerG.step()
-
-    lr_G = [group['lr'] for group in optimG.param_groups]
-    print(lr_G[0])
 
     b,f,c,h,w = opt.batch_size,opt.n_frames,3,res,res
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
 
-    #out = netG(x, noise_map)
+    out = netG(x, noise_map)
 
-    #print(out.shape)
+    print(out.shape)
     #print(netG)
 
     #torchinfo.summary(netG, input_data=[x, noise_map])
@@ -823,5 +808,48 @@ def check_state_dict2():
     for key, value in state_dict.items():
         print(key, value.shape)
 
+def check_flow3():
+    from models.wnet import TSN
+    from models.wnet_bsvd import BSVD
+    from utils.utils import convert_state_dict
+    from collections import OrderedDict
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    #val_dataset = SingleVideoDenoisingTestDataset(opt, sigma=50)
+    val_dataset = SingleVideoDenoisingTestDataset(opt, sigma=50)
+
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    netG = TSN().to(device)
+    torch.save({
+        'params': netG.state_dict()
+    }, 'temp.pth')
+
+    netG_val = BSVD(pretrain_ckpt='temp.pth').to(device)
+    #netG_val.load(netG.state_dict())
+        
+    exit()
+
+    start = time.time()
+    for i, data in enumerate(val_loader):
+        input_seq = torch.cat(data['input_seq'], dim=0).unsqueeze(0).to(device)
+        gt_seq = torch.cat(data['gt_seq'], dim=0).unsqueeze(0).to(device)
+        noise_map = data['noise_map'].unsqueeze(1).to(device)
+
+        # input_seq = (torch.arange(0,13685760, dtype=torch.float32, device=device) / 13685760).reshape(1,11,3,480,864)
+
+        input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=16), [input_seq, gt_seq, noise_map])
+
+        # print(input_seq.shape, gt_seq.shape, noise_map.shape)
+
+        with torch.no_grad():
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                gen = net(input_seq, noise_map)
+        
+        mse = torch.mean((gen-gt_seq)**2)
+        print(20*torch.log10(1/mse**0.5))
+        # 33.1216 vs 33.1262
+        exit()
+
 if __name__=='__main__':
-    check_tsm()
+    check_gif()

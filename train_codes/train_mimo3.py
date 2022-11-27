@@ -227,6 +227,7 @@ def train(opt_path):
                 train_dataset.change_configs(opt.n_frames, opt.input_resolution)
                 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
                 print('Done. Resume Training...')
+                break
                     
             if total_step==opt.steps:
                 torch.save({

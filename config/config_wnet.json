@@ -7,15 +7,21 @@
     "enable_line_nortify": true,
 
     "name": "wnet",
+    "model_type_train": "TSN",
+    "model_type_test": "BSVD",
     "n_gpu": 1,
-    "steps": 400000,
     "batch_size": 8,
+    "random_flip": true,
+    "random_rotate_range": [0, 30],
+    "steps": 700000,
+    "milestones": [50000, 100000, 150000, 200000, 250000, 300000, 350000, 400000, 450000, 500000, 550000, 600000, 650000],
+    "gamma": 0.7,
     "use_grad_clip": true,
-    "T_max": 400000,
+    "T_max": 700000,
     "eta_min": 1e-7,
     "learning_rate_G": 1e-3,
     "betas": [0.9, 0.9], 
-    "sigma_range": [5, 50],
+    "sigma_range": [5, 55],
 
     "print_freq": 100,
     "eval_freq": 5000,
@@ -26,9 +32,6 @@
 
     "color_channels": 3,
     "n_frames": 11,
-    "n_noise_channel": 1,
-    "width": 32,
-    "enc_blk_nums": [1, 1, 1], 
-    "middle_blk_num": 3,
-    "dec_blk_nums": [1, 1, 1]
+    "tsm_fold": 8,
+    "n_noise_channel": 1
 }
