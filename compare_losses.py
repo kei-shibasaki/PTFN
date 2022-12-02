@@ -12,11 +12,11 @@ def smoothing(array, a):
 
 def compare_losses():
     name1 = 'naf_tsm2'
-    name2 = 'naf_tsm_dp'
+    name2 = 'naf_tsm_b16'
     train_log1 = pd.read_csv(f'experiments/{name1}/logs/train_losses_{name1}.csv')
     train_log2 = pd.read_csv(f'experiments/{name2}/logs/train_losses_{name2}.csv')
 
-    plt.figure()
+    plt.figure(figsize=(8,4.5))
     plt.plot(train_log1['step'], smoothing(train_log1['loss_G'], 0.99), alpha=0.5, label=f'{name1}')
     plt.plot(train_log2['step'], smoothing(train_log2['loss_G'], 0.99), alpha=0.5, label=f'{name2}')
     #plt.ylim(0.0002, 0.0008)
@@ -30,7 +30,7 @@ def compare_losses():
     val_log2 = pd.read_csv(f'experiments/{name2}/logs/test_losses_{name2}_50.csv')
     metric = 'psnr'
 
-    plt.figure()
+    plt.figure(figsize=(8,4.5))
     plt.plot(val_log1['step'], val_log1[metric], alpha=0.5, label=f'{name1}')
     plt.plot(val_log2['step'], val_log2[metric], alpha=0.5, label=f'{name2}')
     #plt.ylim(0.0005, 0.001)

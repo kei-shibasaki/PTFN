@@ -240,9 +240,12 @@ class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
 
 
 class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
-    def __init__(self, opt, sigma):
+    def __init__(self, opt, sigma, max_frames=130, margin_frames=10, return_idx=False):
         super().__init__()
         self.n_frames = opt.n_frames
+        self.max_frames = max_frames
+        self.margin_frames = margin_frames
+        self.return_idx = return_idx
         self.sigma = sigma / 255.0
         self.noise_level = torch.ones((1,1,1)) * self.sigma
         
@@ -252,7 +255,7 @@ class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
         self.noise_imgs = []
         images = sorted(glob.glob(os.path.join(video_dir, f'*.{opt.data_extention}')))
 
-        for i, img_path in enumerate(images):
+        for i, img_path in enumerate(tqdm(images)):
             img = read_img(img_path)
             noise = torch.normal(mean=0, std=self.noise_level.expand_as(img))
             self.imgs.append(img)
@@ -261,7 +264,28 @@ class SingleVideoDenoisingTestDataset(torch.utils.data.Dataset):
         self.noise_map = self.noise_level.expand(1, self.imgs[0].shape[1], self.imgs[0].shape[2])
     
     def __getitem__(self, idx):
-        return {'input_seq': self.noise_imgs, 'gt_seq': self.imgs, 'noise_map': self.noise_map}
+        # input_seq: (max_frames+2*margin_frames,C,H,W)
+        if len(self.imgs)<=self.max_frames+2*self.margin_frames:
+            if self.return_idx:
+                forward_idx, start_idx, backward_idx, last_idx = 0, 0, len(self.imgs), len(self.imgs)
+                return {'input_seq': self.noise_imgs, 'gt_seq': self.imgs, 'noise_map': self.noise_map, 'idxs': [forward_idx, start_idx, backward_idx, last_idx]}
+            else:
+                return {'input_seq': self.noise_imgs, 'gt_seq': self.imgs, 'noise_map': self.noise_map}
+        else:
+            forward_idx = self.max_frames*idx
+            backward_idx = min(self.max_frames*(idx+1), len(self.imgs))
+            start_idx = max(forward_idx-self.margin_frames, 0)
+            last_idx = min(backward_idx+self.margin_frames, len(self.imgs))
+            input_seq = self.noise_imgs[start_idx:last_idx]
+            gt_seq = self.imgs[start_idx:last_idx]
+            if self.return_idx:
+                return {'input_seq': input_seq, 'gt_seq': gt_seq, 'noise_map': self.noise_map, 'idxs': [forward_idx, start_idx, backward_idx, last_idx]}
+            else:
+                return {'input_seq': input_seq, 'gt_seq': gt_seq, 'noise_map': self.noise_map}
 
     def __len__(self):
-        return 1
+        if len(self.noise_imgs)<=self.max_frames+2*self.margin_frames: 
+            out = 1
+        else:
+            out = len(self.imgs)//self.max_frames if len(self.imgs)%self.max_frames==0 else len(self.imgs)//self.max_frames+1
+        return out

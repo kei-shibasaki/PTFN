@@ -48,7 +48,7 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network_mimo2')
+    network_module = importlib.import_module('models.network_mimo3')
 
     progressive_configs = {}
     for bs, res, nf, si in zip(opt.batch_size_list, opt.input_resolution_list, opt.n_frames_list, opt.start_iter_list):

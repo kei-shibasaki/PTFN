@@ -6,7 +6,7 @@
     "val_dataset_path": "./datasets/DAVIS-test/JPEGImages/480p/rollercoaster",
     "enable_line_nortify": true,
 
-    "name": "naf_tsm_b16",
+    "name": "naf_tsm_half_b16",
     "model_type_train": "NAFTSM",
     "model_type_test": "NAFBBB",
     "n_gpu": 1,

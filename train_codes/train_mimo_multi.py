@@ -48,7 +48,7 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network_mimo3')
+    network_module = importlib.import_module('models.network_mimo_multi')
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     if opt.pretrained_path:
@@ -84,8 +84,8 @@ def train(opt_path):
             
             # Training G
             netG.zero_grad()
-            gen = netG(input_seq, noise_map)
-            loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
+            gen, inter_imgs = netG(input_seq, noise_map)
+            loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w)) + 0.1*loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
 
             loss_G.backward()
             if opt.use_grad_clip:
@@ -136,7 +136,7 @@ def train(opt_path):
                 #for sigma in [10,20,30,40,50]:
                 for sigma in [50]:
                     val_loader = val_loaders[sigma]
-                    psnr, ssim, loss_G = 0.0, 0.0, 0.0
+                    psnr1, psnr2, ssim1, ssim2, loss_G = 0.0, 0.0, 0.0, 0.0, 0.0
                     for i, data in enumerate(val_loader):
                         # [(B,C,H,W)]*F -> (B,F,C,H,W)
                         input_seq = torch.cat(data['input_seq'], dim=0).unsqueeze(0).to(device)
@@ -146,42 +146,48 @@ def train(opt_path):
                         b,f,c,h,w = input_seq.shape
                         with torch.no_grad():
                             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                                gen = netG_val(input_seq, noise_map)
-                                loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
+                                gen, inter_imgs = netG_val(input_seq, noise_map)
+                                loss_G = loss_fn(gen.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w)) + 0.1*loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
                         
                         # (B,F,C,H,W) -> [(B,C,H,W)]*F
-                        imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, gen, gt_seq])
+                        imgs, inter_imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, inter_imgs, gen, gt_seq])
                         
                         imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], imgs))
+                        inter_imgs = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], inter_imgs))
                         gens = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gens))
                         gts = list(map(lambda x: tensor2ndarray(x)[0,:,:,:], gts))
 
                         os.makedirs(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}'), exist_ok=True)
-                        for j, (img, gen, gt) in enumerate(zip(imgs, gens, gts)):
-                            psnr += calculate_psnr(gen, gt, crop_border=0, test_y_channel=False)
-                            ssim += calculate_ssim(gen, gt, crop_border=0, test_y_channel=False)
+                        for j, (img, inter_img, gen, gt) in enumerate(zip(imgs, inter_imgs, gens, gts)):
+                            psnr1 += calculate_psnr(inter_img, gt, crop_border=0, test_y_channel=False)
+                            psnr2 += calculate_psnr(gen, gt, crop_border=0, test_y_channel=False)
+                            ssim1 += calculate_ssim(inter_img, gt, crop_border=0, test_y_channel=False)
+                            ssim2 += calculate_ssim(gen, gt, crop_border=0, test_y_channel=False)
                             
                             # Visualization
-                            img, gen, gt = map(lambda x: Image.fromarray(x), [img, gen, gt])
-                            compare_img = Image.new('RGB', size=(3*img.width, img.height), color=0)
+                            img, inter_img, gen, gt = map(lambda x: Image.fromarray(x), [img, inter_img, gen, gt])
+                            compare_img = Image.new('RGB', size=(4*img.width, img.height), color=0)
                             compare_img.paste(img, box=(0, 0))
-                            compare_img.paste(gen, box=(img.width, 0))
-                            compare_img.paste(gt, box=(2*img.width, 0))
+                            compare_img.paste(inter_img, box=(img.width, 0))
+                            compare_img.paste(gen, box=(2*img.width, 0))
+                            compare_img.paste(gt, box=(3*img.width, 0))
                             compare_img.save(os.path.join(image_out_dir, str(sigma), f'{str(total_step).zfill(len(str(opt.steps)))}', f'{i:03}_{j:03}.png'), 'PNG')
                     
                     #loss_G = loss_G
-                    psnr = psnr / f
-                    ssim = ssim / f
+                    psnr1 = psnr1 / f
+                    psnr2 = psnr2 / f
+                    ssim1 = ssim1 / f
+                    ssim2 = ssim2 / f
                 
-                    txt = f'sigma: {sigma}, loss_G: {loss_G:f}, PSNR: {psnr:f}, SSIM: {ssim:f}'
+                    txt = f'sigma: {sigma}, loss_G: {loss_G:f}, PSNR1: {psnr1:f}, SSIM1: {ssim1:f}, PSNR2: {psnr2:f}, SSIM: {ssim2:f}'
                     print(txt)
                     with open(f'{log_dir}/log_{model_name}.log', mode='a', encoding='utf-8') as fp:
                         fp.write(txt+'\n')
                     with open(f'{log_dir}/test_losses_{model_name}_{sigma}.csv', mode='a', encoding='utf-8') as fp:
-                        fp.write(f'{total_step},{loss_G:f},{psnr:f},{ssim:f}\n')
+                        fp.write(f'{total_step},{loss_G:f},{psnr1:f},{ssim1:f},{psnr2:f},{ssim2:f}\n')
                     
-                    if psnr >= best_psnr:
-                        best_psnr = psnr
+                    if psnr2 >= best_psnr:
+                        best_psnr = psnr2
                         torch.save({
                             'total_step': total_step,
                             'netG_state_dict': netG.state_dict(),

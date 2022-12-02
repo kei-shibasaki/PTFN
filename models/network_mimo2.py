@@ -4,13 +4,17 @@ from torch.nn import functional as F
 from models.layers import NAFBlock, TemporalShift, NAFBlockBBB, MemSkip
 
 class NAFDenoisingBlockTSM(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, opt, in_channels=None, out_channels=None):
         super().__init__()
         self.enc_blk_nums = opt.enc_blk_nums
         self.middle_blk_num = opt.middle_blk_num
         self.dec_blk_nums = opt.dec_blk_nums
 
-        self.intro = nn.Conv2d(in_channels=opt.color_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        in_channels = in_channels if in_channels is not None else opt.color_channels
+        out_channels = out_channels if out_channels is not None else opt.color_channels
+
+        self.intro = nn.Conv2d(in_channels=in_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.expand_dims = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
         chan = opt.width
         for i, num in enumerate(self.enc_blk_nums):
@@ -32,7 +36,7 @@ class NAFDenoisingBlockTSM(nn.Module):
                 setattr(self, f'dec_tsm_{i}_{j}', TemporalShift(opt.n_frames, 'TSM', fold_div=opt.tsm_fold, stride=1))
                 setattr(self, f'dec_block_{i}_{j}', NAFBlock(chan))
         
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
     def forward(self, seq, noise_map):
         # seq: (B, F, C, H, W), noise_map: (B, 1, 1, H, W)
@@ -60,23 +64,27 @@ class NAFDenoisingBlockTSM(nn.Module):
                 x = getattr(self, f'dec_tsm_{i}_{j}')(x)
                 x = getattr(self, f'dec_block_{i}_{j}')(x)
 
-        x = self.ending(x).reshape(b,f,c,h,w)
-        x = seq + x
+        x = self.ending(x) + self.expand_dims(seq.reshape(b*f,c,h,w))
+        x = x.reshape(b,f,-1,h,w)
 
         return x
 
 class NAFDenoisingBlockBBB(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, opt, in_channels=None, out_channels=None):
         super().__init__()
         self.enc_blk_nums = opt.enc_blk_nums
         self.middle_blk_num = opt.middle_blk_num
         self.dec_blk_nums = opt.dec_blk_nums
 
+        in_channels = in_channels if in_channels is not None else opt.color_channels
+        out_channels = out_channels if out_channels is not None else opt.color_channels
+
         self.skip_intro = MemSkip()
         for i in range(len(self.enc_blk_nums)):
             setattr(self, f'skip_{i}', MemSkip())
 
-        self.intro = nn.Conv2d(in_channels=opt.color_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.intro = nn.Conv2d(in_channels=in_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.expand_dims = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
         chan = opt.width
         for i, num in enumerate(self.enc_blk_nums):
@@ -95,13 +103,27 @@ class NAFDenoisingBlockBBB(nn.Module):
             for j in range(num):
                 setattr(self, f'dec_block_{i}_{j}', NAFBlockBBB(chan))
         
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
     
     def none_add(self, x1, x2):
         if x1 is None or x2 is None:
             return None
         else: 
             return x1+x2
+    
+    def none_reshape(self, x, order):
+        if x is not None:
+            return x.reshape(*order)
+        else:
+            return None
+    
+    def none_expand_dims(self, seq):
+        # seq: (B,F,C,H,W) or None
+        if seq is not None:
+            seq = self.expand_dims(seq.reshape(self.b*self.f,-1,self.h,self.w)).reshape(self.b,self.f,-1,self.h,self.w)
+            return seq
+        else:
+            return None      
 
     def forward(self, seq, noise_map):
         # seq: (B, F, C, H, W), noise_map: (B, 1, 1, H, W)
@@ -134,16 +156,16 @@ class NAFDenoisingBlockBBB(nn.Module):
                 x = getattr(self, f'dec_block_{i}_{j}')(x)
         
         if x is not None:
-            x = self.ending(x)
-            x = self.none_add(self.skip_intro.pop(x), x.reshape(self.b,self.f,self.c,self.h,self.w))
+            x = self.none_add(self.ending(x), self.none_expand_dims(self.skip_intro.pop(x)))
+            x = self.none_reshape(x, [self.b,self.f,-1,self.h,self.w])
 
         return x
 
 class NAFTSM(nn.Module):
     def __init__(self, opt):
         super().__init__()
-        self.temp1 = NAFDenoisingBlockTSM(opt)
-        self.temp2 = NAFDenoisingBlockTSM(opt)
+        self.temp1 = NAFDenoisingBlockTSM(opt, out_channels=opt.width)
+        self.temp2 = NAFDenoisingBlockTSM(opt, in_channels=opt.width)
     
     def forward(self, seq, noise_map):
         # seq: (B, F, C, H, W)
@@ -155,8 +177,8 @@ class NAFBBB(nn.Module):
     def __init__(self, opt, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
         super().__init__()
         self.device = device
-        self.temp1 = NAFDenoisingBlockBBB(opt)
-        self.temp2 = NAFDenoisingBlockBBB(opt)
+        self.temp1 = NAFDenoisingBlockBBB(opt, out_channels=opt.width)
+        self.temp2 = NAFDenoisingBlockBBB(opt, in_channels=opt.width)
         self.shift_num = self.count_shift()
     
     def feed_in_one_element(self, seq, noise_map):

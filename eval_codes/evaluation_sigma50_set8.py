@@ -28,7 +28,7 @@ def eval_from_image(out_path, model_name):
             fp.write(f'video_name,psnr,ssim\n')
     
     # caluculating psnr/ssim in each video
-    dir_paths = sorted([d for d in glob.glob(f'results/{model_name}/*') if os.path.isdir(d)])
+    dir_paths = sorted([d for d in glob.glob(f'results/{model_name}_set8/*') if os.path.isdir(d)])
     for idx_dir, dir_path in enumerate(dir_paths):
         video_name = os.path.basename(dir_path)
         print(f'{idx_dir}/{len(dir_paths)}: Processing {video_name} ...')
@@ -64,8 +64,8 @@ if __name__=='__main__':
     parser.add_argument('-c', '--config', required=True, help='Path of config file')
     args = parser.parse_args()
     opt = EasyDict(load_option(args.config))
-    model_name = 'bsvd_pretrained_set8'
+    model_name = opt.name
     
-    out_path = f'results/bsvd_pretrained_set8'
+    out_path = f'results/{model_name}_set8'
 
     eval_from_image(out_path, model_name)

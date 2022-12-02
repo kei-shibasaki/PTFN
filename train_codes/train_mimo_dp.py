@@ -49,7 +49,7 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{model_name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network_mimo2')
+    network_module = importlib.import_module('models.network_mimo3')
 
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
     netG = nn.DataParallel(netG, device_ids=[0,1])

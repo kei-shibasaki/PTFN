@@ -16,8 +16,8 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    network_module = importlib.import_module('models.network_mimo')
-    net = getattr(network_module, opt['model_type'])(opt).to(device)
+    network_module = importlib.import_module('models.network_mimo3')
+    net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     net.eval()
 
     # Blank Shot

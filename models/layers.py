@@ -70,6 +70,22 @@ class TemporalShift(nn.Module):
 
         return out.view(nt, c, h, w)
 
+class MemSkip(nn.Module):
+    def __init__(self):
+        super(MemSkip, self).__init__()
+        self.mem_list = []
+    def push(self, x):
+        if x is not None:
+            self.mem_list.insert(0,x)
+            return 1
+        else:
+            return 0
+    def pop(self, x):
+        if x is not None:
+            return self.mem_list.pop()
+        else:
+            return None
+
 class NAFBlock(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
@@ -200,44 +216,14 @@ class NAFBlockBBB(nn.Module):
         self.center = input_right
         return output
 
-class MemSkip(nn.Module):
-    def __init__(self):
-        super(MemSkip, self).__init__()
-        self.mem_list = []
-    def push(self, x):
-        if x is not None:
-            self.mem_list.insert(0,x)
-            return 1
-        else:
-            return 0
-    def pop(self, x):
-        if x is not None:
-            return self.mem_list.pop()
-        else:
-            return None
-
-class PseudoTemporalAttention(nn.Module):
-    def __init__(self, dim, heads=8, self_expantion=False):
-        super().__init__()
-        self.self_expantion = self_expantion
-        if self.self_expantion:
-            self.expand = nn.Conv2d(dim, dim*2, kernel_size=1)
-        self.attn = AxialAttention(dim//2, heads=heads, dim_index=1)
-    
-    def forward(self, x):
-        if self.self_expantion: x = self.expand(x)
-        x1, x2 = x.chunk(2, dim=1)
-        x = self.attn(x1, kv=x2)
-        return x
 
 
-class NAFBlock2(nn.Module):
+class NAFBlockHalf(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        # self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel, bias=True)
-        self.conv2 = PseudoTemporalAttention(dw_channel, heads=8, self_expantion=False)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel, bias=True)
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         # Simplified Channel Attention
         self.sca = nn.Sequential(
@@ -247,39 +233,28 @@ class NAFBlock2(nn.Module):
         )
         # SimpleGate
         self.sg = SimpleGate()
-        ffn_channel = FFN_Expand * c
-        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         self.norm1 = LayerNorm2d(c)
-        self.norm2 = LayerNorm2d(c)
         self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
-        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
     def forward(self, inp):
         x = inp
         x = self.norm1(x)
         x = self.conv1(x)
         x = self.conv2(x)
-        # x = self.sg(x)
+        x = self.sg(x)
         x = x * self.sca(x)
         x = self.conv3(x)
         x = self.dropout1(x)
         y = inp + x * self.beta
-        x = self.conv4(self.norm2(y))
-        x = self.sg(x)
-        x = self.conv5(x)
-        x = self.dropout2(x)
-        return y + x * self.gamma
+        return y
 
-class ShiftNAFBlock2(nn.Module):
+class ShiftNAFBlockHalf(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        # self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel, bias=True)
-        self.conv2 = PseudoTemporalAttention(dw_channel, heads=8, self_expantion=False)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel, bias=True)
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         # Simplified Channel Attention
         self.sca = nn.Sequential(
@@ -289,15 +264,9 @@ class ShiftNAFBlock2(nn.Module):
         )
         # SimpleGate
         self.sg = SimpleGate()
-        ffn_channel = FFN_Expand * c
-        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         self.norm1 = LayerNorm2d(c)
-        self.norm2 = LayerNorm2d(c)
         self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
-        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
     def forward(self,  left_fold_2fold, center, right):
         fold_div = 8
@@ -308,22 +277,103 @@ class ShiftNAFBlock2(nn.Module):
         x = self.norm1(x)
         x = self.conv1(x)
         x = self.conv2(x)
-        # x = self.sg(x)
+        x = self.sg(x)
         x = x * self.sca(x)
         x = self.conv3(x)
         x = self.dropout1(x)
         y = inp + x * self.beta
-        x = self.conv4(self.norm2(y))
-        x = self.sg(x)
-        x = self.conv5(x)
-        x = self.dropout2(x)
+        return y
 
-        return y + x * self.gamma
-
-class NAFBlockBBB2(nn.Module):
+class NAFBlockBBBHalf(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
-        super(NAFBlockBBB, self).__init__()
-        self.op = ShiftNAFBlock2(c, DW_Expand, FFN_Expand, drop_out_rate)
+        super(NAFBlockBBBHalf, self).__init__()
+        self.op = ShiftNAFBlockHalf(c, DW_Expand, FFN_Expand, drop_out_rate)
+        self.out_channels = c
+        self.left_fold_2fold = None
+        self.center = None
+        
+    def reset(self):
+        self.left_fold_2fold = None
+        self.center = None
+        
+    def forward(self, input_right, verbose=False):
+        fold_div = 8
+        if input_right is not None:
+            self.n, self.c, self.h, self.w = input_right.size()
+            self.fold = self.c//fold_div
+        # Case1: In the start or end stage, the memory is empty
+        if self.center is None:
+            self.center = input_right
+            if input_right is not None:
+                if self.left_fold_2fold is None:
+                    # In the start stage, the memory and left tensor is empty
+                    self.left_fold_2fold = torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda'))
+                if verbose: print("%f+none+%f = none"%(torch.mean(self.left_fold_2fold), torch.mean(input_right)))
+            else:
+                # in the end stage, both feed in and memory are empty
+                if verbose: print("%f+none+none = none"%(torch.mean(self.left_fold_2fold)))
+                # print("self.center is None")
+            return None
+        # Case2: Center is not None, but input_right is None
+        elif input_right is None:
+            # In the last procesing stage, center is 0
+            output =  self.op(self.left_fold_2fold, self.center, torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda')))
+            if verbose: print("%f+%f+none = %f"%(torch.mean(self.left_fold_2fold), torch.mean(self.center), torch.mean(output)))
+        else:
+            
+            output =  self.op(self.left_fold_2fold, self.center, input_right)
+            if verbose: print("%f+%f+%f = %f"%(torch.mean(self.left_fold_2fold), torch.mean(self.center), torch.mean(input_right), torch.mean(output)))
+        self.left_fold_2fold = self.center[:, self.fold:2*self.fold, :, :]
+        self.center = input_right
+        return output
+
+
+class PseudoTemporalConvBlock(nn.Module):
+    def __init__(self, c, FFN_Expand=2, drop_out_rate=0.):
+        super().__init__()
+        self.sg = SimpleGate()
+        ffn_channel = FFN_Expand * c
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.norm1 = LayerNorm2d(c)
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, inp):
+        x = inp
+        x = self.conv1(self.norm1(x))
+        x = self.sg(x)
+        x = self.conv2(x)
+        x = self.dropout1(x)
+        return inp + x * self.beta
+
+class ShiftPseudoTemporalConvBlock(nn.Module):
+    def __init__(self, c, FFN_Expand=2, drop_out_rate=0.):
+        super().__init__()
+        self.sg = SimpleGate()
+        ffn_channel = FFN_Expand * c
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.norm1 = LayerNorm2d(c)
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self,  left_fold_2fold, center, right):
+        fold_div = 8
+        n, c, h, w = center.size()
+        fold = c//fold_div
+        inp = torch.cat([right[:, :fold, :, :], left_fold_2fold, center[:, 2*fold:, :, :]], dim=1)
+        x = inp
+        x = self.conv1(self.norm1(x))
+        x = self.sg(x)
+        x = self.conv2(x)
+        x = self.dropout1(x)
+        return inp + x * self.beta
+
+class PseudoTemporalConvBlockBBB(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+        super(self).__init__()
+        self.op = ShiftPseudoTemporalConvBlock(c, FFN_Expand, drop_out_rate)
         self.out_channels = c
         self.left_fold_2fold = None
         self.center = None
