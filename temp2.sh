@@ -1,4 +1,11 @@
-CUDA_VISIBLE_DEVICES=3 python -m eval_codes.generate_images -c experiments/naf_tsm2/config_test.json
-#CUDA_VISIBLE_DEVICES=3 python -m eval_codes.generate_images_naf2 -c experiments/naf_multi/config_test.json
-python -m eval_codes.evaluation_sigma50 -c experiments/naf_tsm2/config_test.json
-#python -m eval_codes.evaluation -c experiments/extreme2/config_Ex.json
+#CUDA_VISIBLE_DEVICES=5 python -m eval_codes.generate_images_davis_multi -c experiments/naf_tsm_multi/config_test.json
+#CUDA_VISIBLE_DEVICES=5 python -m eval_codes.generate_images_set8_multi -c experiments/naf_tsm_multi/config_test.json
+
+#python -m eval_codes.evaluation_sigma50_set8_multi -c experiments/naf_tsm_multi/config_test.json
+#python -m eval_codes.evaluation_sigma50_multi -c experiments/naf_tsm_multi/config_test.json
+
+CUDA_VISIBLE_DEVICES=5 python -m eval_codes.generate_images_davis -c experiments/naf_tsm_pt_b8/config_test_dp.json
+python -m eval_codes.evaluation_sigma50 -c experiments/naf_tsm_pt_b8/config_test_dp.json
+
+CUDA_VISIBLE_DEVICES=5 python -m eval_codes.generate_images_set8 -c experiments/naf_tsm_pt_b8/config_test_dp.json
+python -m eval_codes.evaluation_sigma50_set8 -c experiments/naf_tsm_pt_b8/config_test_dp.json

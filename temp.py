@@ -23,19 +23,42 @@ from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTest
 
 
 def check_block():
-    from models.network_mimo3 import NAFTSM, NAFBBB
+    from models.network_mimo2 import NAFTSM, NAFBBB
+    from models.wnet_bsvd import BSVD
 
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
-    # x = torch.rand((1,16,128,128)).to(device)
-    b,f,c,h,w = 1,11,3,96,96
+    b,f,c,h,w = 1,50,3,480,720
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
     net = NAFBBB(opt).to(device)
+    #net = BSVD(pretrain_ckpt=None).to(device)
     out = net(x, noise_map)
     print(out.shape)
     torchinfo.summary(net, input_data=[x, noise_map])
+
+def check_block2():
+    from models.network_mimo2 import NAFTSM, NAFBBB
+    from models.wnet_bsvd import BSVD
+    import thop
+
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    device = torch.device('cuda')
+    b,f,c,h,w = 1,50,3,480,720
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,f,1,h,w)).to(device)
+    #net = NAFBBB(opt).to(device)
+    net = BSVD(pretrain_ckpt=None).to(device)
+    #out = net(x, noise_map)
+    #print(out.shape)
+    #torchinfo.summary(net, input_data=[x, noise_map])
+
+    macs, params = thop.profile(net, inputs=(x, noise_map))
+    print(f'GMACs: {macs/1e9/50:f}')
+    print(f'#Params (M): {params/1e6:f}')
+
 
 def yoyaku():
     device = torch.device('cuda')
@@ -706,7 +729,7 @@ def check_state_dict2():
         print(key, value.shape)
 
 def check_flow3():
-    from models.network_mimo_multi import NAFTSM, NAFBBB
+    from models.network_mimo4 import NAFTSM, NAFBBB
     from utils.utils import convert_state_dict
     from collections import OrderedDict
     device = torch.device('cuda')
@@ -745,5 +768,25 @@ def check_flow3():
         # 33.1216 vs 33.1262
         exit()
 
+def check_remo():
+    import thop
+    device = torch.device('cuda')
+    from models_ReMoNet import ReMoNet
+
+    net = ReMoNet().to(device)
+    b,f,c,h,w = 1,5,3,480,720
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
+
+    #out = net(x, noise_map)
+    #print(out.shape)
+    #torchinfo.summary(net, input_data=[x, noise_map])
+
+    macs, params = thop.profile(net, inputs=(x, noise_map))
+    print(f'GMACs: {macs/1e9/5:f}')
+    print(f'#Params (M): {params/1e6:f}')
+    
+
+
 if __name__=='__main__':
-    check_flow3()
+    check_block2()

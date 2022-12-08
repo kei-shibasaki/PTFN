@@ -28,7 +28,7 @@ def generate_images(opt, checkpoint_path, out_dir):
     dataset_paths = sorted([d for d in glob.glob('datasets/Set8/*') if os.path.isdir(d)])
     opt.data_extention = 'png'
     #dataset_paths = ['datasets/DAVIS-test/JPEGImages/480p/rollercoaster']
-    network_module = importlib.import_module('models.network_mimo2')
+    network_module = importlib.import_module('models.network_mimo4')
     net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     net.load_state_dict(convert_state_dict(checkpoint['netG_state_dict']), strict=True)

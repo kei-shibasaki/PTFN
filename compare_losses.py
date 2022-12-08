@@ -12,7 +12,7 @@ def smoothing(array, a):
 
 def compare_losses():
     name1 = 'naf_tsm2'
-    name2 = 'naf_tsm_b16'
+    name2 = 'naf_tsm_pt_b8'
     train_log1 = pd.read_csv(f'experiments/{name1}/logs/train_losses_{name1}.csv')
     train_log2 = pd.read_csv(f'experiments/{name2}/logs/train_losses_{name2}.csv')
 

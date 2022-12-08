@@ -9,7 +9,7 @@ from utils.utils import load_option
 
 def calc_speed(resolution):
     #opt_path = 'experiments/wnet/config_wnet.json'
-    opt_path = 'config/config_test3.json'
+    opt_path = 'experiments/naf_tsm_pt_b8/config_test_dp.json'
     opt = EasyDict(load_option(opt_path))
     divisible_by = 8
     resolution[0] = divisible_by*(resolution[0]//divisible_by) if resolution[0]%divisible_by==0 else divisible_by*(resolution[0]//divisible_by+1)
@@ -17,7 +17,7 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    network_module = importlib.import_module('models.network_mimo3')
+    network_module = importlib.import_module('models.network_mimo4')
     #net = BSVD(pretrain_ckpt='/home/shibasaki/MyTask/BSVD/experiments/pretrained_ckpt/bsvd-64.pth').to(device)
     net = getattr(network_module, 'NAFBBB')(opt).to(device)
     net.eval()
@@ -58,9 +58,9 @@ def calc_speed(resolution):
 
 if __name__=='__main__':
     #H, W = 256, 256
-    #H, W = 480, 720
+    H, W = 480, 720
     #H, W = 480, 852
-    H, W = 1080, 1920
+    #H, W = 1080, 1920
     #H, W = 540, 960
     runtimes = calc_speed(resolution=[H, W])
     print(f'{np.mean(runtimes)/50:f} ± {np.std(runtimes)/50:f} s')
