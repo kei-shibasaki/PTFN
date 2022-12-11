@@ -193,7 +193,6 @@ class NAFBBB(nn.Module):
     
     def feed_in_one_element(self, seq, noise_map):
         #seq: (B,F,C,H,W)
-
         seq = self.temp1(seq, noise_map)
         if seq is not None:
             b,f,c,h,w = seq.shape

@@ -14,16 +14,13 @@ import numpy as np
 from easydict import EasyDict
 import pandas as pd
 
-from metrics import calculate_psnr, calculate_ssim
-from utils.utils import load_option
+from scripts.metrics import calculate_psnr, calculate_ssim
+from scripts.utils import load_option
 
 
-
-def eval_from_image(out_path, model_name):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+def eval_from_image(out_path, model_name, noise_levels):
     # create result files
-    for sigma in [10,20,30,40,50]:
+    for sigma in noise_levels:
         with open(os.path.join(out_path, f'{model_name}_{sigma:02}_results.csv'), 'w', encoding='utf-8') as fp:
             fp.write(f'video_name,psnr,ssim\n')
     
@@ -32,7 +29,7 @@ def eval_from_image(out_path, model_name):
     for idx_dir, dir_path in enumerate(dir_paths):
         video_name = os.path.basename(dir_path)
         print(f'{idx_dir}/{len(dir_paths)}: Processing {video_name} ...')
-        for sigma in tqdm([10,20,30,40,50]):
+        for sigma in tqdm(noise_levels):
             images_gen = sorted(glob.glob(os.path.join(dir_path, 'generated', str(sigma), '*.png')))
             images_gt = sorted(glob.glob(os.path.join(dir_path, 'GT', '*.png')))
             assert len(images_gen)==len(images_gt), f'{len(images_gen)} vs {len(images_gt)}'
@@ -62,10 +59,13 @@ def eval_from_image(out_path, model_name):
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='A script of evaluate metrics.')
     parser.add_argument('-c', '--config', required=True, help='Path of config file')
+    parser.add_argument('-nl', '--noise_levels', nargs='*', type=int, default=[10,20,30,40,50], help='List of level of gaussian noise [0, 255]')
     args = parser.parse_args()
     opt = EasyDict(load_option(args.config))
     model_name = opt.name
     
     out_path = f'results/{model_name}'
 
-    eval_from_image(out_path, model_name)
+    noise_levels = args.noise_levels
+
+    eval_from_image(out_path, model_name, noise_levels)

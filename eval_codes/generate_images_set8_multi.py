@@ -13,7 +13,7 @@ import numpy as np
 import importlib
 
 from utils.utils import tensor2ndarray, load_option, pad_tensor, convert_state_dict
-from dataloader import SingleVideoDenoisingTestDataset
+from dataset import SingleVideoDenoisingTestDataset
 from easydict import EasyDict
 
 
@@ -79,7 +79,7 @@ def generate_images(opt, checkpoint_path, out_dir):
                     # Visualization
                     img, inter_img, gen, gt = map(lambda x: Image.fromarray(x), [img, inter_img, gen, gt])
                     img.save(os.path.join(out_dataset_dir, 'input', str(sigma), fname), 'PNG')
-                    inter_img.save(os.path.join(out_dataset_dir, 'generated_inter', str(sigma), fname), 'PNG')
+                    inter_img.save(os.path.join(out_dataset_dir, 'generated_inter', str(sigma),  fname), 'PNG')
                     gen.save(os.path.join(out_dataset_dir, 'generated', str(sigma), fname), 'PNG')
                     if sigma==50: gt.save(os.path.join(out_dataset_dir, 'GT', fname), 'PNG')
                     compare_img = Image.new('RGB', size=(4*img.width, img.height), color=0)

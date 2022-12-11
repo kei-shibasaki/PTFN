@@ -1,758 +1,250 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
-from models.layers import NAFBlock
-
-class U2NetDenoisingBlock(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.level = opt.level
-
-        for l in range(self.level):
-            in_channels = opt.channel_info[l-1][1] if l!=0 else 3*(3+1)
-            hidden_channels = opt.channel_info[l][0]
-            out_channels = opt.channel_info[l][1]
-            setattr(self, f'enc_{l}', UNetBlock(opt.sub_levels[l], in_channels, hidden_channels, out_channels))
-            setattr(self, f'downsample_{l}', nn.MaxPool2d(2, ceil_mode=True))
-        
-        hidden_channels = opt.channel_info[-1][1]
-        bottom_layers = []
-        for d in range(opt.bottom_depth):
-            bottom_layers.append(ConvBNReLU(hidden_channels, hidden_channels, dilation=opt.bottom_dilations[d]))
-        self.bottom = nn.Sequential(*bottom_layers)
-    
-        for l in reversed(range(self.level)):
-            in_channels = opt.channel_info[l+1][0] if l!=self.level-1 else opt.channel_info[-1][1]
-            hidden_channels = opt.channel_info[l][1]
-            out_channels = opt.channel_info[l][0]
-            # setattr(self, f'upsample_{l}', nn.PixelShuffle(2))
-            setattr(self, f'dec_{l}', UNetBlock(opt.sub_levels[l], in_channels, hidden_channels, out_channels))
-        
-        self.to_out = nn.Conv2d(opt.channel_info[0][0], 3, kernel_size=3, padding=1)
-
-    def forward(self, x0, x1, x2, noise_map):
-        x = torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1)
-        encoded = []
-        for l in range(self.level):
-            x = getattr(self, f'enc_{l}')(x)
-            encoded.append(x)
-            x = getattr(self, f'downsample_{l}')(x)
-        x = self.bottom(x)
-        for l in reversed(range(self.level)):
-            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-            x = getattr(self, f'dec_{l}')(x+encoded[l])
-        x = self.to_out(x)
-        return x1 - x
-
-class VideoDenoisingNetwork(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = U2NetDenoisingBlock(opt)
-        self.temp2 = U2NetDenoisingBlock(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
+from models.layers import PseudoTemporalFusionBlock, TemporalShift, PseudoTemporalFusionBlockBBB, MemSkip
 
 class DenoisingBlock(nn.Module):
-    def __init__(self):
+    def __init__(self, opt, in_channels=None, out_channels=None):
         super().__init__()
-        self.input = InputConvBlock(num_in_frames=3, out_ch=32)
-        self.down = ConvBlock(32, 64, 64, depth=2, downsample=True)
-        self.bottom = ConvBlock(64, 128, 64, depth=4, downsample=True, upsample=True)
-        self.up = ConvBlock(64, 64, 32, depth=2, upsample=True)
-        self.out = OutputConvBlock(32, 3)
-    
-    def forward(self, x0, x1, x2, noise_map):
-        enc0 = self.input(torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1))
-        enc1 = self.down(enc0)
-        enc2 = self.bottom(enc1)
-        enc1 = self.up(enc1+enc2)
-        out = self.out(enc0+enc1)
-        out = x1 - out
-        return out
+        self.enc_blk_nums = opt.enc_blk_nums
+        self.middle_blk_num = opt.middle_blk_num
+        self.dec_blk_nums = opt.dec_blk_nums
 
-class DenoisingBlock2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.input = InputConvBlock(num_in_frames=3, out_ch=32)
-        self.down1 = ConvBlock(32, 64, 64, depth=2, downsample=True)
-        self.down2 = ConvBlock(64, 64, 64, depth=2, downsample=True)
-        self.bottom = ConvBlock(64, 128, 64, depth=4, downsample=True, upsample=True)
-        self.up1 = ConvBlock(64, 64, 64, depth=2, upsample=True)
-        self.up2 = ConvBlock(64, 64, 32, depth=2, upsample=True)
-        self.out = OutputConvBlock(32, 3)
-    
-    def forward(self, x0, x1, x2, noise_map):
-        enc0 = self.input(torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1))
-        enc1 = self.down1(enc0)
-        enc2 = self.down2(enc1)
-        enc3 = self.bottom(enc2)
-        enc2 = self.up1(enc2+enc3)
-        enc1 = self.up2(enc1+enc2)
-        out = self.out(enc0+enc1)
-        out = x1 - out
-        return out
+        in_channels = in_channels if in_channels is not None else opt.color_channels
+        out_channels = out_channels if out_channels is not None else opt.color_channels
 
-class FastDVDNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.temp1 = DenoisingBlock()
-        self.temp2 = DenoisingBlock()
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
+        self.intro = nn.Conv2d(in_channels=in_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.expand_dims = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
-        return x
-
-class FastDVDNetWiener(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.wiener = WienerFilter(kernel_size=9)
-        self.temp1 = DenoisingBlock()
-        self.temp2 = DenoisingBlock()
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        normed_sigma = noise_map[:,0,0,0].reshape(-1,1,1,1)
-        x0, x1, x2, x3, x4 = map(lambda x: self.wiener(x, noise_power=normed_sigma**2), [x0, x1, x2, x3, x4])
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class FastDVDNetWiener2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.wiener = WienerFilter(kernel_size=3)
-        self.temp1 = DenoisingBlock()
-        self.temp2 = DenoisingBlock()
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        normed_sigma = noise_map[:,0,0,0].reshape(-1,1,1,1)
-        x0, x1, x2, x3, x4 = map(lambda x: self.wiener(x, noise_power=normed_sigma**2), [x0, x1, x2, x3, x4])
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class FastDVDNet2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.temp1 = DenoisingBlock2()
-        self.temp2 = DenoisingBlock2()
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-
-class LapDenoisingBlock(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.level = opt.level
-        self.depths = opt.depths
-        self.lap_pyr = LaplacianPyramid(self.level)
-        for l in range(self.level+1):
-            for d in range(self.depths[l]):
-                if d==0:
-                    if l==self.level-1:
-                        in_channels = 3*(3+1)+3*(3+1)+3
-                    else:
-                        in_channels = 3*(3+1)
-                else:
-                    in_channels = opt.dims[l]
+        chan = opt.width
+        for i, num in enumerate(self.enc_blk_nums):
+            for j in range(num):
+                setattr(self, f'enc_tsm_{i}_{j}', TemporalShift(opt.n_frames, 'TSM', fold_div=opt.tsm_fold, stride=1))
+                setattr(self, f'enc_block_{i}_{j}', PseudoTemporalFusionBlock(chan))
                 
-                out_channels = 3 if d==self.depths[l]-1 else opt.dims[l]
-
-                if (d==0) and (l<self.level-1):
-                    setattr(self, f'expand_dim_{l}', nn.Conv2d(3, in_channels, kernel_size=1))
-
-                setattr(self, f'conv_{l}_{d}', RConvBNReLU(in_channels, out_channels))
-            
-    def forward(self, x0, x1, x2, noise_map):
-        pyr_x0 = self.lap_pyr.pyramid_decom(x0)
-        pyr_x1 = self.lap_pyr.pyramid_decom(x1)
-        pyr_x2 = self.lap_pyr.pyramid_decom(x2)
-        pyr_out = []
-        for l in reversed(range(self.level+1)):
-            x0, x1, x2 = pyr_x0[l], pyr_x1[l], pyr_x2[l]
-            n_map = F.interpolate(noise_map, size=[x0.shape[2], x0.shape[3]], mode='nearest')
-
-            if l==self.level:
-                temp = torch.cat([x0, n_map, x1, n_map, x2, n_map], dim=1)
-                x = temp
-            elif l==self.level-1:
-                temp = F.interpolate(temp, scale_factor=2, mode='bilinear', align_corners=False)
-                x = torch.cat([x, temp, x0, n_map, x1, n_map, x2, n_map], dim=1)
-            else:
-                temp = torch.cat([x0, n_map, x1, n_map, x2, n_map], dim=1)
-                x = getattr(self, f'expand_dim_{l}')(x)
-                x = temp*x + temp
-
-            for d in range(self.depths[l]):
-                x = getattr(self, f'conv_{l}_{d}')(x)
-            
-            pyr_out.append(x)
-            if l!=0:
-                x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-
-        out = self.lap_pyr.pyramid_recons(list(reversed(pyr_out)))
-
-        return out
-
-class VideoDenoisingNetwork2(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = LapDenoisingBlock(opt)
-        self.temp2 = LapDenoisingBlock(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class DenoisingBlockA(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.input = InputConvBlock(num_in_frames=3, out_ch=32)
-        self.down = ConvBlock(32, 64, 64, depth=2, downsample=True)
-
-        self.bottom = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=2, bias=False), 
-            nn.BatchNorm2d(128), 
-            nn.ReLU(inplace=True),
-            AxialTransformerBlock(128, heads=8, mlp_ratio=1, sum_axial_out=True), 
-            AxialTransformerBlock(128, heads=8, mlp_ratio=1, sum_axial_out=True), 
-            nn.Conv2d(128, 4*64, kernel_size=3, padding=1, stride=1, bias=False),
-            nn.PixelShuffle(2),
-        )
-
-        #self.bottom = ConvBlock(64, 128, 64, depth=4, downsample=True, upsample=True)
-
-        self.up = ConvBlock(64, 64, 32, depth=2, upsample=True)
-        self.out = OutputConvBlock(32, 3)
-    
-    def forward(self, x0, x1, x2, noise_map):
-        enc0 = self.input(torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1))
-        enc1 = self.down(enc0)
-        enc2 = self.bottom(enc1)
-        enc1 = self.up(enc1+enc2)
-        out = self.out(enc0+enc1)
-        out = x1 - out
-        return out
-
-class FastDVDNetA(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.temp1 = DenoisingBlockA()
-        self.temp2 = DenoisingBlockA()
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-
-class NAFDenoisingBlock(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-
-        self.intro = nn.Conv2d(in_channels=3*(opt.color_channels+1), out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
-
-        chan = opt.width
-        for num in opt.enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
+            setattr(self, f'enc_down_{i}', nn.Conv2d(chan, 2*chan, 2, 2))
             chan = chan * 2
 
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
-            )
+        for i in range(self.middle_blk_num):
+            setattr(self, f'middle_tsm_{i}', TemporalShift(opt.n_frames, 'TSM', fold_div=opt.tsm_fold, stride=1))
+            setattr(self, f'middle_block_{i}', PseudoTemporalFusionBlock(chan))
 
-        for num in opt.dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
+        for i, num in enumerate(self.dec_blk_nums):
+            setattr(self, f'dec_upconv_{i}', nn.Conv2d(chan, chan * 2, 1, bias=False))
+            setattr(self, f'dec_up_{i}', nn.PixelShuffle(2))
             chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-
-        self.padder_size = 2 ** len(self.encoders)
-
-    def forward(self, x0, x1, x2, noise_map):
-        x = torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1)
-
-        x = self.intro(x)
-
-        encs = []
-
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
-
-        x = self.middle_blks(x)
-
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
-
-        x = self.ending(x)
-        x = x + x1
-
-        return x
-
-class NAFDenoisingBlockWithMC(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.mc = MotionCompensationAttention(3*(opt.color_channels+1), kernel_size=3)
-        self.intro = nn.Conv2d(in_channels=3*(opt.color_channels+1), out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
-
-        chan = opt.width
-        for num in opt.enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
-            chan = chan * 2
-
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
-            )
-
-        for num in opt.dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
-            chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-
-        self.padder_size = 2 ** len(self.encoders)
-
-    def forward(self, x0, x1, x2, noise_map):
-        x = torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1)
-
-        x = self.intro(self.mc(x))
-
-        encs = []
-
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
-
-        x = self.middle_blks(x)
-
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
-
-        x = self.ending(x)
-        x = x + x1
-
-        return x
-
-class NAFDenoisingBlockWithMC2(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.mc = MotionCompensationAttention2(3*(opt.color_channels+1), kernel_size=3)
-        self.intro = nn.Conv2d(in_channels=3*(opt.color_channels+1), out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
-
-        chan = opt.width
-        for num in opt.enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
-            chan = chan * 2
-
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
-            )
-
-        for num in opt.dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
-            chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-
-        self.padder_size = 2 ** len(self.encoders)
-
-    def forward(self, x0, x1, x2, noise_map):
-        x = torch.cat([x0, noise_map, x1, noise_map, x2, noise_map], dim=1)
-
-        x = self.intro(self.mc(x))
-
-        encs = []
-
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
-
-        x = self.middle_blks(x)
-
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
-
-        x = self.ending(x)
-        x = x + x1
-
-        return x
-
-class NAFDenoisingBlockSingle(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-
-        self.intro = nn.Conv2d(in_channels=opt.color_channels+1, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
-
-        chan = opt.width
-        for num in opt.enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
-            chan = chan * 2
-
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
-            )
-
-        for num in opt.dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
-            chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-
-        self.padder_size = 2 ** len(self.encoders)
-
-    def forward(self, x0, noise_map):
-        x = torch.cat([x0, noise_map], dim=1)
-
-        x = self.intro(x)
-
-        encs = []
-
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
-
-        x = self.middle_blks(x)
-
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
-
-        x = self.ending(x)
-        x = x + x0
-
-        return x
-
-class MultiStageNAF(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = NAFDenoisingBlock(opt)
-        self.temp2 = NAFDenoisingBlock(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class MultiStageNAFWithMC(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = NAFDenoisingBlockWithMC(opt)
-        self.temp2 = NAFDenoisingBlockWithMC(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class MultiStageNAFWithMC2(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = NAFDenoisingBlockWithMC2(opt)
-        self.temp2 = NAFDenoisingBlockWithMC2(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x20 = self.temp1(x0, x1, x2, noise_map)
-        x21 = self.temp1(x1, x2, x3, noise_map)
-        x22 = self.temp1(x2, x3, x4, noise_map)
-        x = self.temp2(x20, x21, x22, noise_map)
-
-        return x
-
-class MultiStageNAF2(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        self.temp1 = NAFDenoisingBlockSingle(opt)
-        self.temp2 = NAFDenoisingBlock(opt)
-        self.temp3 = NAFDenoisingBlock(opt)
-        self.temp4 = NAFDenoisingBlockSingle(opt)
-    
-    def forward(self, x0, x1, x2, x3, x4, noise_map):
-        x0, x1, x2, x3, x4 = map(lambda x: self.temp1(x, noise_map), [x0, x1, x2, x3, x4])
-        x20 = self.temp2(x0, x1, x2, noise_map)
-        x21 = self.temp2(x1, x2, x3, noise_map)
-        x22 = self.temp2(x2, x3, x4, noise_map)
-        x = self.temp3(x20, x21, x22, noise_map)
-        x = self.temp4(x, noise_map)
-
-        return x
-
-class NAFDenoisingBlockMIMO(nn.Module):
-    def __init__(self, opt, n_frames=None):
-        super().__init__()
-        n_frames = opt.n_frames if n_frames is None else n_frames
-
-        self.intro = nn.Conv2d(in_channels=n_frames*opt.color_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=n_frames*opt.color_channels, kernel_size=3, padding=1, stride=1, groups=1,
-                              bias=True)
-
-        self.encoders = nn.ModuleList()
-        self.decoders = nn.ModuleList()
-        self.middle_blks = nn.ModuleList()
-        self.ups = nn.ModuleList()
-        self.downs = nn.ModuleList()
-
-        chan = opt.width
-        for num in opt.enc_blk_nums:
-            self.encoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-            self.downs.append(
-                nn.Conv2d(chan, 2*chan, 2, 2)
-            )
-            chan = chan * 2
-
-        self.middle_blks = \
-            nn.Sequential(
-                *[NAFBlock(chan) for _ in range(opt.middle_blk_num)]
-            )
-
-        for num in opt.dec_blk_nums:
-            self.ups.append(
-                nn.Sequential(
-                    nn.Conv2d(chan, chan * 2, 1, bias=False),
-                    nn.PixelShuffle(2)
-                )
-            )
-            chan = chan // 2
-            self.decoders.append(
-                nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
-                )
-            )
-
-        self.padder_size = 2 ** len(self.encoders)
-
-    def forward(self, seq, noise_map):
-        # seq: (B, C*F, H, W)
-        x = torch.cat([seq, noise_map], dim=1)
-        x = self.intro(x)
-
-        encs = []
-
-        for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
-            encs.append(x)
-            x = down(x)
-
-        x = self.middle_blks(x)
-
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
-            x = up(x)
-            x = x + enc_skip
-            x = decoder(x)
-
-        x = self.ending(x)
-        x = seq + x
-
-        return x
-
-class MultiStageNAFMIMO(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        assert opt.n_frames==9
-        self.n_blocks = opt.n_frames//3
-        self.temp1 = NAFDenoisingBlockMIMO(opt, n_frames=3)
-        self.temp2 = NAFDenoisingBlockMIMO(opt, n_frames=9)
-        self.temp3 = NAFDenoisingBlockMIMO(opt, n_frames=3)
-
-    def forward(self, seq, noise_map):
-        # Stage1
-        seq = torch.chunk(seq, self.n_blocks, dim=1)
-        seq = list(map(lambda x: self.temp1(x, noise_map), seq))
-
-        # Stage2
-        seq = torch.cat(seq, dim=1)
-        seq = self.temp2(seq, noise_map)
-
-        # Stage3
-        seq = torch.chunk(seq, self.n_blocks, dim=1)
-        seq = list(map(lambda x: self.temp3(x, noise_map), seq))
-        seq = torch.cat(seq, dim=1)
-        return seq
-
-class MultiStageNAFMIMO2(nn.Module):
-    def __init__(self, opt):
-        super().__init__()
-        assert opt.n_frames==12
-        self.n_blocks1 = 4
-        self.n_blocks2 = 2
-        self.temp1 = NAFDenoisingBlockMIMO(opt, n_frames=3)
-        self.temp2 = NAFDenoisingBlockMIMO(opt, n_frames=6)
-        self.temp3 = NAFDenoisingBlockMIMO(opt, n_frames=12)
-        self.temp4 = NAFDenoisingBlockMIMO(opt, n_frames=6)
-        self.temp5 = NAFDenoisingBlockMIMO(opt, n_frames=3)
-
-    def forward(self, seq, noise_map):
-        # Stage1
-        seq = torch.chunk(seq, self.n_blocks1, dim=1)
-        seq = list(map(lambda x: self.temp1(x, noise_map), seq))
-        seq = torch.cat(seq, dim=1)
-
-        # Stage2
-        seq = torch.chunk(seq, self.n_blocks2, dim=1)
-        seq = list(map(lambda x: self.temp2(x, noise_map), seq))
-        seq = torch.cat(seq, dim=1)
-
-        # Stage3
-        seq = self.temp3(seq, noise_map)
+            for j in range(num):
+                setattr(self, f'dec_tsm_{i}_{j}', TemporalShift(opt.n_frames, 'TSM', fold_div=opt.tsm_fold, stride=1))
+                setattr(self, f'dec_block_{i}_{j}', PseudoTemporalFusionBlock(chan))
         
-        # Stage4
-        seq = torch.chunk(seq, self.n_blocks2, dim=1)
-        seq = list(map(lambda x: self.temp4(x, noise_map), seq))
-        seq = torch.cat(seq, dim=1)
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
 
-        # Stage5
-        seq = torch.chunk(seq, self.n_blocks1, dim=1)
-        seq = list(map(lambda x: self.temp5(x, noise_map), seq))
-        seq = torch.cat(seq, dim=1)
+    def forward(self, seq, noise_map):
+        # seq: (B, F, C, H, W), noise_map: (B, 1, 1, H, W)
+        b, f, c, h, w = seq.shape
+        x = torch.cat([seq, noise_map.repeat(1,f,1,1,1)], dim=2).reshape(b*f,c+1,h,w)
+        x = self.intro(x)
 
-        return seq
+        encs = []
+        for i, num in enumerate(self.enc_blk_nums):
+            for j in range(num):
+                x = getattr(self, f'enc_tsm_{i}_{j}')(x)
+                x = getattr(self, f'enc_block_{i}_{j}')(x)
+            encs.append(x)
+            x = getattr(self, f'enc_down_{i}')(x)
+
+        for i in range(self.middle_blk_num):
+            x = getattr(self, f'middle_tsm_{i}')(x)
+            x = getattr(self, f'middle_block_{i}')(x)
+
+        for i, (num, enc) in enumerate(zip(self.dec_blk_nums, encs[::-1])):
+            x = getattr(self, f'dec_upconv_{i}')(x)
+            x = getattr(self, f'dec_up_{i}')(x)
+            x = x + enc
+            for j in range(num):
+                x = getattr(self, f'dec_tsm_{i}_{j}')(x)
+                x = getattr(self, f'dec_block_{i}_{j}')(x)
+
+        x = self.ending(x) + self.expand_dims(seq.reshape(b*f,c,h,w))
+        x = x.reshape(b,f,-1,h,w)
+
+        return x
+
+class DenoisingBlockBBB(nn.Module):
+    def __init__(self, opt, in_channels=None, out_channels=None):
+        super().__init__()
+        self.enc_blk_nums = opt.enc_blk_nums
+        self.middle_blk_num = opt.middle_blk_num
+        self.dec_blk_nums = opt.dec_blk_nums
+
+        in_channels = in_channels if in_channels is not None else opt.color_channels
+        out_channels = out_channels if out_channels is not None else opt.color_channels
+
+        self.skip_intro = MemSkip()
+        for i in range(len(self.enc_blk_nums)):
+            setattr(self, f'skip_{i}', MemSkip())
+
+        self.intro = nn.Conv2d(in_channels=in_channels+opt.n_noise_channel, out_channels=opt.width, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+        self.expand_dims = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+        chan = opt.width
+        for i, num in enumerate(self.enc_blk_nums):
+            for j in range(num):
+                setattr(self, f'enc_block_{i}_{j}', PseudoTemporalFusionBlockBBB(chan))
+            setattr(self, f'enc_down_{i}', nn.Conv2d(chan, 2*chan, 2, 2))
+            chan = chan * 2
+
+        for i in range(self.middle_blk_num):
+            setattr(self, f'middle_block_{i}', PseudoTemporalFusionBlockBBB(chan))
+
+        for i, num in enumerate(self.dec_blk_nums):
+            setattr(self, f'dec_upconv_{i}', nn.Conv2d(chan, chan * 2, 1, bias=False))
+            setattr(self, f'dec_up_{i}', nn.PixelShuffle(2))
+            chan = chan // 2
+            for j in range(num):
+                setattr(self, f'dec_block_{i}_{j}', PseudoTemporalFusionBlockBBB(chan))
+        
+        self.ending = nn.Conv2d(in_channels=opt.width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
+    
+    def none_add(self, x1, x2):
+        if x1 is None or x2 is None:
+            return None
+        else: 
+            return x1+x2
+    
+    def none_reshape(self, x, order):
+        if x is not None:
+            return x.reshape(*order)
+        else:
+            return None
+    
+    def none_expand_dims(self, seq):
+        # seq: (B,F,C,H,W) or None
+        if seq is not None:
+            seq = self.expand_dims(seq.reshape(self.b*self.f,-1,self.h,self.w)).reshape(self.b,self.f,-1,self.h,self.w)
+            return seq
+        else:
+            return None      
+
+    def forward(self, seq, noise_map):
+        # seq: (B, F, C, H, W), noise_map: (B, 1, 1, H, W)
+        self.skip_intro.push(seq)
+        if seq is not None:
+            self.b, self.f, self.c, self.h, self.w = seq.shape
+            x = torch.cat([seq, noise_map.repeat(1,self.f,1,1,1)], dim=2).reshape(self.b*self.f,self.c+1,self.h,self.w)
+            x = self.intro(x)
+        else:
+            x = None
+
+        cnt = 0
+        for i, num in enumerate(self.enc_blk_nums):
+            for j in range(num):
+                x = getattr(self, f'enc_block_{i}_{j}')(x)
+            getattr(self, f'skip_{i}').push(x)
+            if x is not None:
+                x = getattr(self, f'enc_down_{i}')(x)
+
+        for i in range(self.middle_blk_num):
+            x = getattr(self, f'middle_block_{i}')(x)
+
+        for i, num in enumerate(self.dec_blk_nums):
+            if x is not None:
+                x = getattr(self, f'dec_upconv_{i}')(x)
+                x = getattr(self, f'dec_up_{i}')(x)
+                enc_feature = getattr(self, f'skip_{len(self.enc_blk_nums)-1-i}').pop(x)
+                x = self.none_add(x, enc_feature)
+            for j in range(num):
+                x = getattr(self, f'dec_block_{i}_{j}')(x)
+        
+        if x is not None:
+            x = self.none_add(self.ending(x), self.none_expand_dims(self.skip_intro.pop(x)))
+            x = self.none_reshape(x, [self.b,self.f,-1,self.h,self.w])
+
+        return x
+
+class PseudoTemporalFusionNetwork(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.temp1 = DenoisingBlock(opt, out_channels=opt.width)
+        self.temp2 = DenoisingBlock(opt, in_channels=opt.width)
+        self.to_rgb = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=1)
+    
+    def forward(self, seq, noise_map):
+        # seq: (B, F, C, H, W)
+        b,f,c,h,w = seq.shape
+        seq = self.temp1(seq, noise_map)
+        inter_img = self.to_rgb(seq.reshape(b*f,-1,h,w)).reshape(b,f,-1,h,w)
+        seq = self.temp2(seq, noise_map)
+        return seq, inter_img
+
+class PseudoTemporalFusionNetworkEval(nn.Module):
+    def __init__(self, opt, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+        super().__init__()
+        self.device = device
+        self.temp1 = DenoisingBlockBBB(opt, out_channels=opt.width)
+        self.temp2 = DenoisingBlockBBB(opt, in_channels=opt.width)
+        self.to_rgb = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=1)
+        self.shift_num = self.count_shift()
+    
+    def none_reshape(self, x, order):
+        if x is not None:
+            return x.reshape(*order)
+        else:
+            return None
+    
+    def feed_in_one_element(self, seq, noise_map):
+        #seq: (B,F,C,H,W)
+        seq = self.temp1(seq, noise_map)
+        if seq is not None:
+            b,f,c,h,w = seq.shape
+            inter_img = self.to_rgb(seq.reshape(b*f,-1,h,w)).reshape(b,f,-1,h,w)
+        else:
+            inter_img = None
+        seq = self.temp2(seq, noise_map)
+        return seq, inter_img
+    
+    def count_shift(self):
+        count = 0
+        for name, module in self.named_modules():
+            if 'PseudoTemporalFusionBlockBBB' in str(type(module)):
+                count += 1
+        return count
+    
+    def reset(self):
+        for name, module in self.named_modules():
+            if 'PseudoTemporalFusionBlockBBB' in str(type(module)):
+                module.reset()
+
+    def forward(self, seq, noise_map):
+        # (1,F,C,H,W) -> [(1,C,H,W)]*F
+        seq = torch.unbind(seq, dim=1)
+        noise_map = noise_map.to(self.device)
+
+        out_seq1 = []
+        out_seq2 = []
+        with torch.no_grad():
+            cnt = 0
+            for i, x in enumerate(seq):
+                # (1,C,H,W) -> (1,1,C,H,W)
+                x = x.unsqueeze(0).to(self.device)
+                x, inter_img = self.feed_in_one_element(x, noise_map)
+                out_seq1.append(x)
+                out_seq2.append(inter_img)
+            end_out, inter_img = self.feed_in_one_element(None, noise_map)
+            out_seq1.append(end_out)
+            out_seq2.append(inter_img)
+
+            while True:
+                end_out, inter_img = self.feed_in_one_element(None, noise_map)
+                if len(out_seq1)==(self.shift_num+len(seq)): break
+                out_seq1.append(end_out)
+                out_seq2.append(inter_img)
+
+            out_seq_clip1 = out_seq1[self.shift_num:]
+            out_seq_clip2 = []
+            for inter_img in out_seq2:
+                if inter_img is not None:
+                    out_seq_clip2.append(inter_img)
+
+            self.reset()
+
+            return torch.cat(out_seq_clip1, dim=1), torch.cat(out_seq_clip2, dim=1)

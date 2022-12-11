@@ -1,26 +1,18 @@
 import json
-import os
+from collections import OrderedDict
+from PIL import Image
+
+import cv2
 import numpy as np
+import requests
 import torch
 from torch.nn import functional as F
-import requests
-import cv2
-import glob
-import math
-from collections import OrderedDict
+
 
 def load_option(opt_path):
     with open(opt_path, 'r') as json_file:
         json_obj = json.load(json_file)
         return json_obj
-
-def tensor2ndarray3d(tensor):
-    # Pytorch Tensor (B, C, D, H, W), [0, 1] -> ndarray (B, D, H, W, C) [0, 255]
-    img = tensor.detach()
-    img = img.cpu().permute(0,2,3,4,1).numpy()
-    img = np.clip(img, a_min=0, a_max=1.0)
-    img = (img*255).astype(np.uint8)
-    return img
 
 def pad_tensor(x, divisible_by=8, mode='reflect'):
     if len(x.shape)==5:
@@ -42,53 +34,14 @@ def pad_tensor(x, divisible_by=8, mode='reflect'):
 
     return x
 
-
 def read_img(path):
-    """Read a sequence of images from a given folder path.
-    Args:
-        path (list[str] | str): List of image paths or image folder path.
-        require_mod_crop (bool): Require mod crop for each image.
-            Default: False.
-        scale (int): Scale factor for mod_crop. Default: 1.
-        return_imgname(bool): Whether return image names. Default False.
-    Returns:
-        Tensor: size (c, h, w), RGB, [0, 1].
-    """
+    # Return tensor with (C, H, W), RGB, [0, 1].
     img = cv2.imread(path).astype(np.float32) / 255.
     img = img2tensor(img, bgr2rgb=True, float32=True)
 
     return img
 
-def read_img_seq(path):
-    """Read a sequence of images from a given folder path.
-    Args:
-        path (list[str] | str): List of image paths or image folder path.
-        require_mod_crop (bool): Require mod crop for each image.
-            Default: False.
-        scale (int): Scale factor for mod_crop. Default: 1.
-        return_imgname(bool): Whether return image names. Default False.
-    Returns:
-        Tensor: size (t, c, h, w), RGB, [0, 1].
-    """
-    img_paths = path
-    imgs = [cv2.imread(v).astype(np.float32) / 255. for v in img_paths]
-
-    imgs = img2tensor(imgs, bgr2rgb=True, float32=True)
-    imgs = torch.stack(imgs, dim=0)
-
-    return imgs
-
 def img2tensor(imgs, bgr2rgb=True, float32=True):
-    """Numpy array to tensor.
-    Args:
-        imgs (list[ndarray] | ndarray): Input images.
-        bgr2rgb (bool): Whether to change bgr to rgb.
-        float32 (bool): Whether to change to float32.
-    Returns:
-        list[tensor] | tensor: Tensor images. If returned results only have
-            one element, just return tensor.
-    """
-
     def _totensor(img, bgr2rgb, float32):
         if img.shape[2] == 3 and bgr2rgb:
             if img.dtype == 'float64':
@@ -133,3 +86,18 @@ def convert_state_dict(state_dict):
         new_state_dict[key] = value
     
     return new_state_dict
+
+def load_fake_img(b,f,c,h,w):
+    img = read_img('utils/ai_pet_family.png').unsqueeze(0)
+    img = F.interpolate(img, size=[h,w], mode='bilinear', align_corners=False).unsqueeze(1)
+    img = img.repeat(b,f,1,1,1)
+    return img
+
+def arrange_images(images):
+    # Input: list of PIL Image
+    n = len(images)
+    w, h = images[0].width, images[0].height
+    out = Image.new('RGB', size=(n*w, h), color=0)
+    for i, img in enumerate(images):
+        out.paste(img, box=(i*w, 0))
+    return out

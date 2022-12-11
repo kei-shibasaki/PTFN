@@ -15,16 +15,13 @@ from metrics import calculate_psnr, calculate_ssim
 import cv2
 import time
 
-#from models.layers import LaplacianPyramid, MBConvBlock, LaplacianPyramid, UNetBlock, WienerFilter, MotionCompensationAttention2
-from models.network import *
-#from models.networkM import FastDVDNetM, TinyDenoisingBlock, TinyDenoisingBlockSingle, ExtremeStageDenoisingNetwork, ExtremeStageDenoisingNetwork2
 from utils.utils import pad_tensor, tensor2ndarray, read_img
-from dataloader import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset, DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
+from dataset import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset, DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
 
 
 def check_block():
-    from models.network_mimo2 import NAFTSM, NAFBBB
-    from models.wnet_bsvd import BSVD
+    from models.network import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval
+    import thop
 
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
@@ -32,11 +29,12 @@ def check_block():
     b,f,c,h,w = 1,50,3,480,720
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
-    net = NAFBBB(opt).to(device)
-    #net = BSVD(pretrain_ckpt=None).to(device)
-    out = net(x, noise_map)
-    print(out.shape)
-    torchinfo.summary(net, input_data=[x, noise_map])
+    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+    out1, out2 = net(x, noise_map)
+    print(out1.shape, out2.shape)
+    #torchinfo.summary(net, input_data=[x, noise_map])
+    macs, params = thop.profile(net, inputs=[x, noise_map])
+    print(f'GMACs: {macs/1e9/f:f}, #Params: {params/1e6:f}')
 
 def check_block2():
     from models.network_mimo2 import NAFTSM, NAFBBB
@@ -789,4 +787,4 @@ def check_remo():
 
 
 if __name__=='__main__':
-    check_block2()
+    check_block()

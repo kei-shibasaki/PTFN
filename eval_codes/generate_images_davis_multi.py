@@ -13,7 +13,7 @@ import numpy as np
 import importlib
 
 from utils.utils import tensor2ndarray, load_option, pad_tensor, convert_state_dict
-from dataloader import SingleVideoDenoisingTestDataset
+from dataset import SingleVideoDenoisingTestDataset
 from easydict import EasyDict
 
 
