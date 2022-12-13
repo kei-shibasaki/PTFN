@@ -4,7 +4,7 @@
     "val_dataset_path": "./datasets/DAVIS-test/JPEGImages/480p/rollercoaster",
     "enable_line_nortify": true,
 
-    "name": "ptfn_b8",
+    "name": "ptfn_fullsca_b8",
     "model_type_train": "PseudoTemporalFusionNetwork",
     "model_type_test": "PseudoTemporalFusionNetworkEval",
     "batch_size": 8,

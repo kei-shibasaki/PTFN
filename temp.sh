@@ -13,7 +13,8 @@ CUDA_VISIBLE_DEVICES=3,2 python -m train_codes.train_mimo_dp2 -c config/config_t
 CUDA_VISIBLE_DEVICES=6,7 python -m train_codes.train_mimo_dp -c config/config_test_dp.json
 CUDA_VISIBLE_DEVICES=2,3 python -m train_codes.train_wnet -c config/config_wnet.json
 CUDA_VISIBLE_DEVICES=5 python -m train_codes.train -c config/config_test.json
-CUDA_VISIBLE_DEVICES=2,3 python -m train_codes.train_dp -c config/config_test_dp.json
+CUDA_VISIBLE_DEVICES=2,3 python -m train_codes.train_dp -c config/config_test.json
+CUDA_VISIBLE_DEVICES=6,7 python -m train_codes.train_dp -c config/config_test.json
 
 
 CUDA_VISIBLE_DEVICES=5 python -m eval_codes.generate_images_davis_multi -c experiments/naf_tsm_multi/config_test.json
