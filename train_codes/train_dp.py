@@ -43,18 +43,18 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{opt.name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network3')
+    network_module = importlib.import_module('models.network')
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
-    netG = nn.DataParallel(netG, device_ids=[0,1])
+    netG = nn.DataParallel(netG, device_ids=[0,1,2,3])
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
-    if opt.pretrained_path:
-        netG_state_dict = torch.load(opt.pretrained_path, map_location=device)
-        netG_state_dict = netG_state_dict['netG_state_dict']
-        netG.load_state_dict(netG_state_dict, strict=False)
-
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
     schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
-    
+
+    if opt.pretrained_path:
+        state_dict = torch.load(opt.pretrained_path, map_location=device)
+        netG.load_state_dict(state_dict['netG_state_dict'], strict=False)
+        optimG.load_state_dict(state_dict['optimG_state_dict'])
+
     train_dataset = VideoDenoisingDatasetTrain(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
     val_loaders = {}

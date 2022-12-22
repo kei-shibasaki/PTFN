@@ -11,12 +11,11 @@ import time
 from PIL import Image
 import os
 from tqdm import tqdm
-from metrics import calculate_psnr, calculate_ssim
+from scripts.metrics import calculate_psnr, calculate_ssim
 import cv2
 import time
 
-from utils.utils import pad_tensor, tensor2ndarray, read_img
-from dataset import DAVISVideoDenoisingTrainDataset, SingleVideoDenoisingTestDataset, DAVISVideoDenoisingTrainDatasetMIMO, SingleVideoDenoisingTestDatasetMIMO
+from scripts.utils import pad_tensor, tensor2ndarray, read_img
 
 
 def check_block():
@@ -26,36 +25,38 @@ def check_block():
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
-    b,f,c,h,w = 1,50,3,480,720
+    b,f,c,h,w = 2,2,3,480,480
+    opt.n_frames = f
     x = torch.rand((b,f,c,h,w)).to(device)
     noise_map = torch.rand((b,1,1,h,w)).to(device)
-    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+    net = PseudoTemporalFusionNetwork(opt).to(device)
     out1, out2 = net(x, noise_map)
     print(out1.shape, out2.shape)
-    #torchinfo.summary(net, input_data=[x, noise_map])
-    macs, params = thop.profile(net, inputs=[x, noise_map])
-    print(f'GMACs: {macs/1e9/f:f}, #Params: {params/1e6:f}')
+    torchinfo.summary(net, input_data=[x, noise_map])
+    #macs, params = thop.profile(net, inputs=[x, noise_map])
+    #print(f'GMACs: {macs/1e9/f:f}, #Params: {params/1e6:f}')
 
 def check_block2():
-    from models.network_mimo2 import NAFTSM, NAFBBB
-    from models.wnet_bsvd import BSVD
+    from models.network3 import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval
     import thop
 
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
-    b,f,c,h,w = 1,50,3,480,720
+    b,f,c,h,w = 16,opt.n_frames,3,96,96
+
     x = torch.rand((b,f,c,h,w)).to(device)
-    noise_map = torch.rand((b,f,1,h,w)).to(device)
-    #net = NAFBBB(opt).to(device)
-    net = BSVD(pretrain_ckpt=None).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
+    #net = PseudoTemporalFusionNetworkEval(opt).to(device)
+    net = PseudoTemporalFusionNetwork(opt).to(device)
+    #net = BSVD(pretrain_ckpt=None).to(device)
     #out = net(x, noise_map)
     #print(out.shape)
-    #torchinfo.summary(net, input_data=[x, noise_map])
+    torchinfo.summary(net, input_data=[x, noise_map])
 
-    macs, params = thop.profile(net, inputs=(x, noise_map))
-    print(f'GMACs: {macs/1e9/50:f}')
-    print(f'#Params (M): {params/1e6:f}')
+    #macs, params = thop.profile(net, inputs=(x, noise_map))
+    #print(f'GMACs: {macs/1e9/50:f}')
+    #print(f'#Params (M): {params/1e6:f}')
 
 
 def yoyaku():
@@ -769,22 +770,49 @@ def check_flow3():
 def check_remo():
     import thop
     device = torch.device('cuda')
-    from models_ReMoNet import ReMoNet
+    from UNUSED.wnet_bsvd import BSVD
 
-    net = ReMoNet().to(device)
-    b,f,c,h,w = 1,5,3,480,720
+    net = BSVD(pretrain_ckpt=None).to(device)
+    b,f,c,h,w = 1,50,3,480,856
     x = torch.rand((b,f,c,h,w)).to(device)
-    noise_map = torch.rand((b,1,1,h,w)).to(device)
+    noise_map = torch.rand((b,f,1,h,w)).to(device)
 
     #out = net(x, noise_map)
     #print(out.shape)
     #torchinfo.summary(net, input_data=[x, noise_map])
 
     macs, params = thop.profile(net, inputs=(x, noise_map))
-    print(f'GMACs: {macs/1e9/5:f}')
+    print(f'GMACs: {macs/1e9/50:f}')
     print(f'#Params (M): {params/1e6:f}')
     
+def check_halfmodel():
+    from models.network2 import PseudoTemporalFusionNetworkEval
+    from scripts.utils import convert_state_dict
+    import thop
+
+    device = torch.device('cuda')
+    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    
+    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+
+    checkpoint = torch.load('experiments/ptfn_b16/ckpt/ptfn_b16_400000.ckpt', map_location=device)
+    net.load_state_dict(convert_state_dict(checkpoint['netG_state_dict']), strict=False)
+
+    b,f,c,h,w = 1,50,3,480,856
+    x = torch.rand((b,f,c,h,w)).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
+
+    macs, params = thop.profile(net, inputs=(x, noise_map))
+    print(f'GMACs: {macs/1e9/50:f}')
+    print(f'#Params (M): {params/1e6:f}')
+
+    #with torch.no_grad():
+    #    out = net(x, noise_map)
+
+    #print(out.shape)
 
 
 if __name__=='__main__':
-    check_block()
+    yoyaku()
+    #check_block2()

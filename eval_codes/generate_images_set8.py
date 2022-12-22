@@ -24,7 +24,7 @@ def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_
     dataset_paths = sorted([d for d in glob.glob('datasets/Set8/*') if os.path.isdir(d)])
     opt.data_extention = 'png'
     #dataset_paths = ['datasets/Set8/hypersmooth']
-    network_module = importlib.import_module('models.network')
+    network_module = importlib.import_module('models.network3')
     net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     net.load_state_dict(convert_state_dict(checkpoint['netG_state_dict']), strict=True)
@@ -55,12 +55,13 @@ def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_
                 noise_map = data['noise_map'].unsqueeze(1).to(device)
                 input_seq, gt_seq, noise_map = map(lambda x: pad_tensor(x, divisible_by=8), [input_seq, gt_seq, noise_map])
                 with torch.no_grad():
-                    if generate_inter_img:
-                        gens, inter_imgs = net(input_seq, noise_map)
-                    else:
-                        gens = net(input_seq, noise_map)
-                        b,f,c,h,w = gens.shape
-                        inter_imgs = load_fake_img(b,f,c,h,w)
+                    with torch.cuda.amp.autocast():
+                        if generate_inter_img:
+                            gens, inter_imgs = net(input_seq, noise_map)
+                        else:
+                            gens = net(input_seq, noise_map)
+                            b,f,c,h,w = gens.shape
+                            inter_imgs = load_fake_img(b,f,c,h,w)
 
                 offset = data['idxs'][1].numpy()[0]
                 frame1 = (data['idxs'][1] if i==0 else data['idxs'][0]).numpy()[0]
@@ -95,7 +96,7 @@ if __name__=='__main__':
     parser.add_argument('-c', '--config', required=True, help='Path of config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default=None, help='Path to the chenckpoint')
     parser.add_argument('-nl', '--noise_levels', nargs='*', type=int, default=[10,20,30,40,50], help='List of level of gaussian noise [0, 255]')
-    parser.add_argument('-inter', '--generae_inter_img', action='store_true', help='Wether you want generate inter_img of the network')
+    parser.add_argument('-inter', '--not_generae_inter_img', action='store_false', help='Wether you want generate inter_img of the network')
     args = parser.parse_args()
     opt = EasyDict(load_option(args.config))
         
@@ -108,6 +109,6 @@ if __name__=='__main__':
     out_dir = f'results/{model_name}_set8'
 
     noise_levels = args.noise_levels
-    generae_inter_img = args.generae_inter_img
+    generae_inter_img = args.not_generae_inter_img
     
     generate_images(opt, checkpoint_path, out_dir, noise_levels, generae_inter_img)

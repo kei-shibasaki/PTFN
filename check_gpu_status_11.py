@@ -50,7 +50,7 @@ def nortify_gpu_status(csv_path, omit_gpus=[], token_path='line_nortify_token.js
 
     for omit_gpu in omit_gpus:
         df = df[df['index']!=omit_gpu]
-    free_gpu_info = df[df['memory.free']>15000]
+    free_gpu_info = df[df['memory.free']>24000]
     # print(f'{free_gpu_info}')
     if len(free_gpu_info)>0:
         with open(token_path, 'r', encoding='utf-8') as fp:
@@ -59,9 +59,9 @@ def nortify_gpu_status(csv_path, omit_gpus=[], token_path='line_nortify_token.js
 
 
 if __name__=='__main__':
-    SERVER_INDEX = 12
+    SERVER_INDEX = 11
     csv_path = 'temp.csv'
-    omit_gpus = [0,1]
+    omit_gpus = []
     interval_minute = 20
     while True:
         TIMESTAMP = datetime.datetime.now(JST)

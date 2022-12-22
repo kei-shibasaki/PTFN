@@ -41,6 +41,11 @@ class SimpleGate(nn.Module):
         x1, x2 = x.chunk(2, dim=1)
         return x1 * x2
 
+class PseudoTemporalGate(nn.Module):
+    def forward(self, x):
+        x1, x2, x3 = x.chunk(3, dim=1)
+        return x1*x2 + x2*x3
+
 class TemporalShift(nn.Module):
     def __init__(self, n_segment, shift_type, fold_div=8, stride=1):
         super().__init__()
@@ -87,9 +92,13 @@ class PseudoTemporalFusionSpatial(nn.Module):
         super().__init__()
         self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.norm = LayerNorm2d(dim)
-        self.conv1 = nn.Conv2d(dim, 2*dim, kernel_size=1, bias=True)
-        self.conv2 = nn.Conv2d(2*dim, 2*dim, kernel_size=3, padding=1, groups=2*dim)
-        self.sg = SimpleGate()
+        self.conv1 = nn.Conv2d(dim, 3*dim, kernel_size=1, bias=True)
+        self.conv2 = nn.Conv2d(3*dim, 3*dim, kernel_size=3, padding=1, groups=3*dim)
+        self.sg = PseudoTemporalGate()
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        )
         self.conv3 = nn.Conv2d(dim, dim, kernel_size=1, bias=True)
     
     def forward(self, x):
@@ -98,6 +107,7 @@ class PseudoTemporalFusionSpatial(nn.Module):
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.sg(x)
+        x = x * self.sca(x)
         x = self.conv3(x)
         return a + x*self.alpha
 
@@ -106,8 +116,8 @@ class PseudoTemporalFusion(nn.Module):
         super().__init__()
         self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.norm = LayerNorm2d(dim)
-        self.conv1 = nn.Conv2d(dim, 2*dim, kernel_size=1, bias=True)
-        self.sg = SimpleGate()
+        self.conv1 = nn.Conv2d(dim, 3*dim, kernel_size=1, bias=True)
+        self.sg = PseudoTemporalGate()
         self.conv2 = nn.Conv2d(dim, dim, kernel_size=1, bias=True)
     
     def forward(self, x):

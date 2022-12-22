@@ -42,7 +42,16 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{opt.name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network3')
+    network_module = importlib.import_module('models.network')
+    progressive_configs = {}
+    for bs, res, nf, si in zip(opt.batch_size_list, opt.input_resolution_list, opt.n_frames_list, opt.start_iter_list):
+        if si==0: continue
+        progressive_configs[si] = {'batch_size': bs, 'input_resolution': res, 'n_frames': nf}
+    
+    opt.batch_size = opt.batch_size_list[0]
+    opt.input_resolution = opt.input_resolution_list[0]
+    opt.n_frames = opt.n_frames_list[0]
+    
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     if opt.pretrained_path:
@@ -182,6 +191,28 @@ def train(opt_path):
                     'netG_state_dict': netG.state_dict(),
                     'optimG_state_dict': optimG.state_dict(),
                 }, os.path.join(model_ckpt_dir, f'{opt.name}_{str(total_step).zfill(len(str(opt.steps)))}.ckpt'))
+
+            if total_step in opt.start_iter_list:
+                print(f'{str(total_step).zfill(len(str(opt.steps)))}: Changing Training Config...')
+                netG_state_dict = netG.state_dict()
+                optimG_state_dict = optimG.state_dict()
+
+                print(f'Batchsize, Resolution, Frames: {opt.batch_size}, {opt.input_resolution}, {opt.n_frames} -> ', end='')
+                opt.batch_size = progressive_configs[total_step]['batch_size']
+                opt.input_resolution = progressive_configs[total_step]['input_resolution']
+                opt.n_frames = progressive_configs[total_step]['n_frames']
+                print(f'{opt.batch_size}, {opt.input_resolution}, {opt.n_frames}')
+
+                netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
+                netG.load_state_dict(netG_state_dict)
+                optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
+                optimG.load_state_dict(optimG_state_dict)
+                schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
+                for _ in range(total_step): schedulerG.step()
+                train_dataset.change_configs(opt.n_frames, opt.input_resolution)
+                train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
+                print('Done. Resume Training...')
+                break
                     
             if total_step==opt.steps:
                 torch.save({

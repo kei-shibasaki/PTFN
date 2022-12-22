@@ -248,3 +248,65 @@ class PseudoTemporalFusionNetworkEval(nn.Module):
             self.reset()
 
             return torch.cat(out_seq_clip1, dim=1), torch.cat(out_seq_clip2, dim=1)
+
+class PseudoTemporalFusionNetworkEvalHalf(nn.Module):
+    def __init__(self, opt, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+        super().__init__()
+        self.device = device
+        self.temp1 = DenoisingBlockBBB(opt, out_channels=opt.width)
+        self.to_rgb = nn.Conv2d(in_channels=opt.width, out_channels=opt.color_channels, kernel_size=1)
+        self.shift_num = self.count_shift()
+    
+    def none_reshape(self, x, order):
+        if x is not None:
+            return x.reshape(*order)
+        else:
+            return None
+    
+    def feed_in_one_element(self, seq, noise_map):
+        #seq: (B,F,C,H,W)
+        seq = self.temp1(seq, noise_map)
+        if seq is not None:
+            b,f,c,h,w = seq.shape
+            inter_img = self.to_rgb(seq.reshape(b*f,-1,h,w)).reshape(b,f,-1,h,w)
+        else:
+            inter_img = None
+        return inter_img
+    
+    def count_shift(self):
+        count = 0
+        for name, module in self.named_modules():
+            if 'PseudoTemporalFusionBlockBBB' in str(type(module)):
+                count += 1
+        return count
+    
+    def reset(self):
+        for name, module in self.named_modules():
+            if 'PseudoTemporalFusionBlockBBB' in str(type(module)):
+                module.reset()
+
+    def forward(self, seq, noise_map):
+        # (1,F,C,H,W) -> [(1,C,H,W)]*F
+        seq = torch.unbind(seq, dim=1)
+        noise_map = noise_map.to(self.device)
+
+        out_seq1 = []
+        with torch.no_grad():
+            for i, x in enumerate(seq):
+                # (1,C,H,W) -> (1,1,C,H,W)
+                x = x.unsqueeze(0).to(self.device)
+                x = self.feed_in_one_element(x, noise_map)
+                out_seq1.append(x)
+            end_out = self.feed_in_one_element(None, noise_map)
+            out_seq1.append(end_out)
+
+            while True:
+                end_out = self.feed_in_one_element(None, noise_map)
+                if len(out_seq1)==(self.shift_num+len(seq)): break
+                out_seq1.append(end_out)
+
+            out_seq_clip1 = out_seq1[self.shift_num:]
+
+            self.reset()
+
+            return torch.cat(out_seq_clip1, dim=1)

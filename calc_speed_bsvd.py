@@ -3,13 +3,14 @@ import numpy as np
 import time
 from easydict import EasyDict
 import importlib
-from models.wnet_bsvd import BSVD
+from UNUSED.wnet_bsvd import BSVD
+from models.network import PseudoTemporalFusionNetworkEvalHalf
 
-from utils.utils import load_option
+from scripts.utils import load_option
 
 def calc_speed(resolution):
     #opt_path = 'experiments/wnet/config_wnet.json'
-    opt_path = 'experiments/naf_tsm_pt_b8/config_test_dp.json'
+    opt_path = 'experiments/ptfn_b8/config_test.json'
     opt = EasyDict(load_option(opt_path))
     divisible_by = 8
     resolution[0] = divisible_by*(resolution[0]//divisible_by) if resolution[0]%divisible_by==0 else divisible_by*(resolution[0]//divisible_by+1)
@@ -17,9 +18,10 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    network_module = importlib.import_module('models.network_mimo4')
-    #net = BSVD(pretrain_ckpt='/home/shibasaki/MyTask/BSVD/experiments/pretrained_ckpt/bsvd-64.pth').to(device)
-    net = getattr(network_module, 'NAFBBB')(opt).to(device)
+    network_module = importlib.import_module('models.network2')
+    #net = BSVD(pretrain_ckpt=None).to(device)
+    #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
+    net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     net.eval()
 
     # Blank Shot
@@ -58,9 +60,11 @@ def calc_speed(resolution):
 
 if __name__=='__main__':
     #H, W = 256, 256
-    H, W = 480, 720
-    #H, W = 480, 852
-    #H, W = 1080, 1920
+    #H, W = 480, 720
+    #H, W = 480, 856
+    #H, W = 720, 1280
+    H, W = 1080, 1920
+    #H, W = 2560, 1440
     #H, W = 540, 960
     runtimes = calc_speed(resolution=[H, W])
     print(f'{np.mean(runtimes)/50:f} ± {np.std(runtimes)/50:f} s')
