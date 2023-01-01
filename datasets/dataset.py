@@ -81,7 +81,6 @@ class VideoDenoisingDatasetTrain(torch.utils.data.Dataset):
 class SingleVideoDenoisingDatasetTest(torch.utils.data.Dataset):
     def __init__(self, opt, sigma, max_frames=130, margin_frames=10, return_idx=False):
         super().__init__()
-        self.n_frames = opt.n_frames
         self.max_frames = max_frames
         self.margin_frames = margin_frames
         self.return_idx = return_idx

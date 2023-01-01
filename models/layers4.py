@@ -36,10 +36,15 @@ class LayerNorm2d(nn.Module):
     def forward(self, x):
         return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
-class PseudoTemporalFusion(nn.Module):
+class SimpleGate(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * x2
+
+class PseudoTemporalGate(nn.Module):
     def forward(self, x):
         x1, x2, x3 = x.chunk(3, dim=1)
-        return 0.5*(x1*x2 + x2*x3)
+        return x1*x2 + x2*x3
 
 class TemporalShift(nn.Module):
     def __init__(self, n_segment, shift_type, fold_div=8, stride=1):
@@ -82,113 +87,53 @@ class MemSkip(nn.Module):
         else:
             return None
 
-class ConvBlock(nn.Module):
+class PseudoTemporalFusionSpatial(nn.Module):
     def __init__(self, dim):
         super().__init__()
+        self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.norm = LayerNorm2d(dim)
-        self.conv1 = nn.Conv2d(dim, 2*dim, kernel_size=1, bias=True)
-        self.conv2 = nn.Conv2d(2*dim, 2*dim, kernel_size=3, padding=1, groups=2*dim)
-        self.gelu = nn.GELU()
-        self.conv3 = nn.Conv2d(2*dim, dim, kernel_size=1, bias=True)
+        self.conv1 = nn.Conv2d(dim, 3*dim, kernel_size=1, bias=True)
+        self.conv2 = nn.Conv2d(3*dim, 3*dim, kernel_size=3, padding=1, groups=3*dim)
+        self.sg = PseudoTemporalGate()
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        )
+        self.conv3 = nn.Conv2d(dim, dim, kernel_size=1, bias=True)
     
     def forward(self, x):
         a = x
         x = self.norm(x)
         x = self.conv1(x)
         x = self.conv2(x)
-        x = self.gelu(x)
+        x = self.sg(x)
+        x = x * self.sca(x)
         x = self.conv3(x)
-        return a + x
+        return a + x*self.alpha
 
-class PseudoTemporalFusionBlock(nn.Module):
+class PseudoTemporalFusion(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        # self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
+        self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.norm = LayerNorm2d(dim)
         self.conv1 = nn.Conv2d(dim, 3*dim, kernel_size=1, bias=True)
-        self.ptf = PseudoTemporalFusion()
+        self.sg = PseudoTemporalGate()
         self.conv2 = nn.Conv2d(dim, dim, kernel_size=1, bias=True)
     
     def forward(self, x):
         a = x
         x = self.norm(x)
         x = self.conv1(x)
-        x = self.ptf(x)
+        x = self.sg(x)
         x = self.conv2(x)
-        return a + x
+        return a + x*self.alpha
 
-# Standard Models
-class DenoisingLayers(nn.Module):
+class PseudoTemporalFusionBlock(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.ptfs = ConvBlock(dim)
-        self.ptf1 = PseudoTemporalFusionBlock(dim)
-
-    def forward(self, x):
-        x = self.ptfs(x)
-        x = self.ptf1(x)
-        return x
-
-class ShiftDenoisingLayers(nn.Module):
-    def __init__(self, dim, fold_div=8):
-        super().__init__()
-        self.ptfs = ConvBlock(dim)
-        self.ptf1 = PseudoTemporalFusionBlock(dim)
-        self.fold_div = fold_div
-
-    def forward(self,  left_fold_2fold, center, right):
-        _, c, _, _ = center.size()
-        fold = c//self.fold_div
-        x = torch.cat([right[:, :fold, :, :], left_fold_2fold, center[:, 2*fold:, :, :]], dim=1)
-        x = self.ptfs(x)
-        x = self.ptf1(x)
-        return x
-
-class DenoisingLayersBBB(nn.Module):
-    def __init__(self, dim, fold_div=8):
-        super().__init__()
-        self.fold_div = fold_div
-        self.op = ShiftDenoisingLayers(dim, fold_div)
-        self.left_fold_2fold = None
-        self.center = None
-        
-    def reset(self):
-        self.left_fold_2fold = None
-        self.center = None
-        
-    def forward(self, input_right):
-        if input_right is not None:
-            self.n, self.c, self.h, self.w = input_right.size()
-            self.fold = self.c//self.fold_div
-        # Case1: In the start or end stage, the memory is empty
-        if self.center is None:
-            self.center = input_right
-            if input_right is not None:
-                if self.left_fold_2fold is None:
-                    # In the start stage, the memory and left tensor is empty
-                    self.left_fold_2fold = torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda'))
-            else:
-                # in the end stage, both feed in and memory are empty
-                pass
-                # print("self.center is None")
-            return None
-        # Case2: Center is not None, but input_right is None
-        elif input_right is None:
-            # In the last procesing stage, center is 0
-            output =  self.op(self.left_fold_2fold, self.center, torch.zeros((self.n, self.fold, self.h, self.w), device=torch.device('cuda')))
-        else:
-            output =  self.op(self.left_fold_2fold, self.center, input_right)
-        self.left_fold_2fold = self.center[:, self.fold:2*self.fold, :, :]
-        self.center = input_right
-        return output
-
-# Larger Models
-class DenoisingLayersL(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.ptfs = ConvBlock(dim)
-        self.ptf1 = PseudoTemporalFusionBlock(dim)
-        self.ptf2 = PseudoTemporalFusionBlock(dim)
+        self.ptfs = PseudoTemporalFusionSpatial(dim)
+        self.ptf1 = PseudoTemporalFusion(dim)
+        self.ptf2 = PseudoTemporalFusion(dim)
 
     def forward(self, x):
         x = self.ptfs(x)
@@ -196,12 +141,12 @@ class DenoisingLayersL(nn.Module):
         x = self.ptf2(x)
         return x
 
-class ShiftDenoisingLayersL(nn.Module):
+class ShiftPseudoTemporalFusionBlock(nn.Module):
     def __init__(self, dim, fold_div=8):
         super().__init__()
-        self.ptfs = ConvBlock(dim)
-        self.ptf1 = PseudoTemporalFusionBlock(dim)
-        self.ptf2 = PseudoTemporalFusionBlock(dim)
+        self.ptfs = PseudoTemporalFusionSpatial(dim)
+        self.ptf1 = PseudoTemporalFusion(dim)
+        self.ptf2 = PseudoTemporalFusion(dim)
         self.fold_div = fold_div
 
     def forward(self,  left_fold_2fold, center, right):
@@ -213,11 +158,10 @@ class ShiftDenoisingLayersL(nn.Module):
         x = self.ptf2(x)
         return x
 
-class DenoisingLayersBBBL(nn.Module):
+class PseudoTemporalFusionBlockBBB(nn.Module):
     def __init__(self, dim, fold_div=8):
         super().__init__()
-        self.fold_div = fold_div
-        self.op = ShiftDenoisingLayersL(dim, fold_div)
+        self.op = ShiftPseudoTemporalFusionBlock(dim, fold_div)
         self.left_fold_2fold = None
         self.center = None
         
@@ -226,9 +170,10 @@ class DenoisingLayersBBBL(nn.Module):
         self.center = None
         
     def forward(self, input_right):
+        fold_div = 8
         if input_right is not None:
             self.n, self.c, self.h, self.w = input_right.size()
-            self.fold = self.c//self.fold_div
+            self.fold = self.c//fold_div
         # Case1: In the start or end stage, the memory is empty
         if self.center is None:
             self.center = input_right

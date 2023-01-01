@@ -16,6 +16,7 @@ from scripts.losses import PSNRLoss
 from scripts.metrics import calculate_psnr, calculate_ssim
 from scripts.utils import convert_state_dict, load_option, pad_tensor, send_line_notify, tensor2ndarray, arrange_images
 
+os.environ['MAGICK_OCL_DEVICE'] = 'OFF'
 
 def train(opt_path):
     opt = EasyDict(load_option(opt_path))
@@ -32,14 +33,6 @@ def train(opt_path):
     os.makedirs(model_ckpt_dir, exist_ok=True)
     os.makedirs(image_out_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
-
-    with open(log_path, mode='w', encoding='utf-8') as fp: fp.write('')
-    with open(log_train_losses_path, mode='w', encoding='utf-8') as fp: fp.write('step,lr,loss_G\n')
-    for sigma in opt.sigmas_for_eval:
-        with open(log_test_losses_paths[sigma], mode='w', encoding='utf-8') as fp:
-            fp.write('step,loss_G,loss_G_inter,loss_G_final,psnr_inter,ssim_inter,psnr,ssim\n')
-    
-    shutil.copy(opt_path, f'./experiments/{opt.name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
     network_module = importlib.import_module('models.network')
@@ -54,14 +47,9 @@ def train(opt_path):
     
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
-    if opt.pretrained_path:
-        netG_state_dict = torch.load(opt.pretrained_path, map_location=device)
-        netG_state_dict = netG_state_dict['netG_state_dict']
-        netG.load_state_dict(netG_state_dict, strict=False)
-
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
     schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
-    
+
     train_dataset = VideoDenoisingDatasetTrain(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
     val_loaders = {}
@@ -69,10 +57,44 @@ def train(opt_path):
         val_dataset = SingleVideoDenoisingDatasetTest(opt, sigma)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
         val_loaders[sigma] = val_loader
+    
+    if opt.pretrained_path:
+        state_dict = torch.load(opt.pretrained_path, map_location=device)
+        netG.load_state_dict(state_dict['netG_state_dict'], strict=True)
+        optimG.load_state_dict(state_dict['optimG_state_dict'])
+        for i in range(opt.resume_step+1):
+            if i==0: continue
+            if i in opt.start_iter_list:
+                print(f'{str(i).zfill(len(str(opt.steps)))}: Changing Training Config...')
+                netG_state_dict = netG.state_dict()
+                optimG_state_dict = optimG.state_dict()
+
+                print(f'Batchsize, Resolution, Frames: {opt.batch_size}, {opt.input_resolution}, {opt.n_frames} -> ', end='')
+                opt.batch_size = progressive_configs[i]['batch_size']
+                opt.input_resolution = progressive_configs[i]['input_resolution']
+                opt.n_frames = progressive_configs[i]['n_frames']
+                print(f'{opt.batch_size}, {opt.input_resolution}, {opt.n_frames}')
+
+                netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
+                netG.load_state_dict(netG_state_dict)
+                optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
+                optimG.load_state_dict(optimG_state_dict)
+                schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
+                for _ in range(i): schedulerG.step()
+                train_dataset.change_configs(opt.n_frames, opt.input_resolution)
+                train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
+                #print('Done. Resume Training...')
+    if opt.create_new_log:
+        with open(log_path, mode='w', encoding='utf-8') as fp: fp.write('')
+        with open(log_train_losses_path, mode='w', encoding='utf-8') as fp: fp.write('step,lr,loss_G\n')
+        for sigma in opt.sigmas_for_eval:
+            with open(log_test_losses_paths[sigma], mode='w', encoding='utf-8') as fp:
+                fp.write('step,loss_G,loss_G_inter,loss_G_final,psnr_inter,ssim_inter,psnr,ssim\n')
+        shutil.copy(opt_path, f'./experiments/{opt.name}/{os.path.basename(opt_path)}')
 
     print('Start Training')
     start_time = time.time()
-    total_step = 0
+    total_step = 0 if opt.resume_step is None else opt.resume_step
     best_psnr = -float('inf')
     netG.train()
     for e in range(1, 42*opt.steps):
@@ -191,7 +213,7 @@ def train(opt_path):
                     'netG_state_dict': netG.state_dict(),
                     'optimG_state_dict': optimG.state_dict(),
                 }, os.path.join(model_ckpt_dir, f'{opt.name}_{str(total_step).zfill(len(str(opt.steps)))}.ckpt'))
-
+                    
             if total_step in opt.start_iter_list:
                 print(f'{str(total_step).zfill(len(str(opt.steps)))}: Changing Training Config...')
                 netG_state_dict = netG.state_dict()
@@ -213,7 +235,7 @@ def train(opt_path):
                 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
                 print('Done. Resume Training...')
                 break
-                    
+
             if total_step==opt.steps:
                 torch.save({
                     'total_step': total_step,

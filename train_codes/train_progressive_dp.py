@@ -17,7 +17,6 @@ from scripts.losses import PSNRLoss
 from scripts.metrics import calculate_psnr, calculate_ssim
 from scripts.utils import convert_state_dict, load_option, pad_tensor, send_line_notify, tensor2ndarray, arrange_images
 
-
 def train(opt_path):
     opt = EasyDict(load_option(opt_path))
     torch.backends.cudnn.benchmark = True

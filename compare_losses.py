@@ -11,33 +11,38 @@ def smoothing(array, a):
     return new_array
 
 def compare_losses():
-    name1 = 'ptfn_b8'
-    name2 = 'ptfn_progressive2'
-    train_log1 = pd.read_csv(f'experiments/{name1}/logs/train_losses_{name1}.csv')
-    train_log2 = pd.read_csv(f'experiments/{name2}/logs/train_losses_{name2}.csv')
-    val_log1 = pd.read_csv(f'experiments/{name1}/logs/test_losses_{name1}_50.csv')
-    val_log2 = pd.read_csv(f'experiments/{name2}/logs/test_losses_{name2}_50.csv')
+    names = ['ptfn_v4_small_b16', 'ptfn_inter000', 'ptfn_inter001', 'ptfn_inter100']
+    #names = ['ptfn_b16', 'ptfn_v4_b16']
+    train_logs = {}
+    val_logs = {}
+    for name in names:
+        train_logs[name] = pd.read_csv(f'experiments/{name}/logs/train_losses_{name}.csv')
+        val_logs[name] = pd.read_csv(f'experiments/{name}/logs/test_losses_{name}_50.csv')
     metric = 'psnr'
+    figsize = (16,9)
 
-    plt.figure(figsize=(8,4.5))
-    plt.plot(train_log1['step'], smoothing(train_log1['loss_G'], 0.99), alpha=0.5, label=f'{name1} train')
-    plt.plot(train_log2['step'], smoothing(train_log2['loss_G'], 0.99), alpha=0.5, label=f'{name2} train')
-    plt.plot(val_log1['step'], smoothing(val_log1['loss_G'], 0.0), alpha=0.5, label=f'{name1} val')
-    plt.plot(val_log2['step'], smoothing(val_log2['loss_G'], 0.0), alpha=0.5, label=f'{name2} val')
-    #plt.ylim(0.0002, 0.0008) 
+    plt.figure(figsize=figsize)
+    for name in names:
+        tlog = train_logs[name]
+        vlog = val_logs[name]
+        plt.plot(tlog['step'], smoothing(tlog['loss_G'], 0.99), alpha=0.5, label=f'{name} train')
+        plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_inter'], 0.0), alpha=0.5, label=f'{name} val inter')
+        plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_final'], 0.0), alpha=0.5, label=f'{name} val final')
     plt.ylim(-42, -30)
     plt.legend()
     plt.grid()
-    plt.savefig(f'temp/compare_train_{name1}_{name2}.png')
+    plt.savefig(f'temp/compare_train_{"_".join(names)}.png')
 
-    plt.figure(figsize=(8,4.5))
-    plt.plot(val_log1['step'], val_log1[metric], alpha=0.5, label=f'{name1}')
-    plt.plot(val_log2['step'], val_log2[metric], alpha=0.5, label=f'{name2}')
-    #plt.ylim(0.0005, 0.001)
+    plt.figure(figsize=figsize)
+    for name in names:
+        vlog = val_logs[name]
+        plt.plot(vlog['step'], smoothing(vlog[metric], 0.0), alpha=0.5, label=f'{name}')
+        plt.plot(vlog['step'], smoothing(vlog[metric+'_inter'], 0.0), alpha=0.5, label=f'{name} inter')
+
     plt.ylim(30, 35)
     plt.legend()
     plt.grid()
-    plt.savefig(f'temp/compare_val_{name1}_{name2}_{metric}.png')
+    plt.savefig(f'temp/compare_val_{"_".join(names)}_{metric}.png')
 
 
 if __name__=='__main__':

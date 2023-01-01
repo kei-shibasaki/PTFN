@@ -37,26 +37,30 @@ def check_block():
     #print(f'GMACs: {macs/1e9/f:f}, #Params: {params/1e6:f}')
 
 def check_block2():
-    from models.network3 import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval
+    from models.network7 import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval, PseudoTemporalFusionNetworkEvalHalf
+    #from UNUSED.wnet_bsvd import BSVD
     import thop
 
     with open('config/config_test.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
-    b,f,c,h,w = 16,opt.n_frames,3,96,96
+    #b,f,c,h,w = 8,opt.n_frames,3,96,96
+    #b,f,c,h,w = 1,50,3,480,856
+    b,f,c,h,w = 1,50,3,720,1280
 
     x = torch.rand((b,f,c,h,w)).to(device)
-    noise_map = torch.rand((b,1,1,h,w)).to(device)
-    #net = PseudoTemporalFusionNetworkEval(opt).to(device)
-    net = PseudoTemporalFusionNetwork(opt).to(device)
+    noise_map = torch.rand((b,f,1,h,w)).to(device)
+    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+    #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
+    #net = PseudoTemporalFusionNetwork(opt).to(device)
     #net = BSVD(pretrain_ckpt=None).to(device)
     #out = net(x, noise_map)
     #print(out.shape)
-    torchinfo.summary(net, input_data=[x, noise_map])
+    #torchinfo.summary(net, input_data=[x, noise_map])
 
-    #macs, params = thop.profile(net, inputs=(x, noise_map))
-    #print(f'GMACs: {macs/1e9/50:f}')
-    #print(f'#Params (M): {params/1e6:f}')
+    macs, params = thop.profile(net, inputs=(x, noise_map))
+    print(f'GMACs: {macs/1e9/50:f}')
+    print(f'#Params (M): {params/1e6:f}')
 
 
 def yoyaku():
@@ -812,7 +816,26 @@ def check_halfmodel():
 
     #print(out.shape)
 
+def check_convert_state_dict():
+    from models.network import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval
+    #from models.network8 import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval
+    from scripts.utils import convert_state_dict
+
+    device = torch.device('cuda')
+    with open('config/config_ptfn.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    
+    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+
+    checkpoint = torch.load('experiments/ptfn_v4_small_b16/ckpt/ptfn_v4_small_b16_400000.ckpt', map_location=device)
+    state_dict = convert_state_dict(checkpoint['netG_state_dict'])
+    net.load_state_dict(state_dict, strict=True)
+
+    for key, value in state_dict.items():
+        print(key, value.shape)
+
 
 if __name__=='__main__':
-    yoyaku()
+    #yoyaku()
     #check_block2()
+    check_convert_state_dict()
