@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from models.layers import TemporalShift, MemSkip, DenoisingLayers, DenoisingLayersBBB, DenoisingLayersL, DenoisingLayersBBBL
+from models.layers_ahead import TemporalShift, MemSkip, DenoisingLayers, DenoisingLayersBBB, DenoisingLayersL, DenoisingLayersBBBL
 
 # Standard Model
 class DenoisingBlock(nn.Module):

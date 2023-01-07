@@ -834,8 +834,116 @@ def check_convert_state_dict():
     for key, value in state_dict.items():
         print(key, value.shape)
 
+def check_schedular():
+    import pandas as pd
+    import matplotlib.pyplot as plt 
+    from models.network import PseudoTemporalFusionNetworkL
+
+    device = torch.device('cuda')
+    with open('config/config_ptfn4.json', 'r', encoding='utf-8') as fp:
+        opt = EasyDict(json.load(fp))
+    
+    tlog = pd.read_csv('experiments/ptfn_v4_small_b16/logs/train_losses_ptfn_v4_small_b16.csv')
+    
+    netG = PseudoTemporalFusionNetworkL(opt).to(device)
+    optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
+    schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
+    state_dict = torch.load(opt.pretrained_path, map_location=device)
+
+    nums1 = []
+    lrs1 = []
+    for i in range(opt.resume_step): 
+        lr_G = [group['lr'] for group in optimG.param_groups]
+        nums1.append(i)
+        lrs1.append(lr_G[0])
+        schedulerG.step()
+
+    netG.load_state_dict(state_dict['netG_state_dict'], strict=True)
+    optimG.load_state_dict(state_dict['optimG_state_dict'])
+
+    nums2 = []
+    lrs2 = []
+    for i in range(opt.resume_step, opt.steps): 
+        lr_G = [group['lr'] for group in optimG.param_groups]
+        nums2.append(i)
+        lrs2.append(lr_G[0])
+        schedulerG.step()
+    
+    plt.figure(figsize=(8,4.5))
+    plt.plot(tlog['step'], tlog['lr'], label='correct', alpha=0.5)
+    plt.plot(nums1, lrs1, label='resume 1', alpha=0.5)
+    plt.plot(nums2, lrs2, label='resume 2', alpha=0.5)
+    plt.grid()
+    plt.legend()
+    plt.savefig('temp/temp.png')
+
+def check_lr():
+    import pandas as pd
+    import matplotlib.pyplot as plt 
+
+    tlog1 = pd.read_csv('experiments/ptfn_v4_small_b16/logs/train_losses_ptfn_v4_small_b16.csv')
+    tlog2 = pd.read_csv('experiments/ptfn_progressive3/logs/train_losses_ptfn_progressive3.csv')
+    
+    plt.figure(figsize=(8,4.5))
+    plt.plot(tlog1['step'], tlog1['lr'], label='correct', alpha=0.5)
+    plt.plot(tlog2['step'], tlog2['lr'], label='a', alpha=0.5)
+    plt.grid()
+    plt.legend()
+    plt.savefig('temp/temp.png')
+
+def check_diff():
+    import pandas as pd 
+    log1 = pd.read_csv('results/bsvd_pretrained/bsvd_pretrained_50_results.csv')
+    log2 = pd.read_csv('results/ptfn_inter010/ptfn_inter010_50_results.csv')
+
+    diff = log2['psnr']-log1['psnr']
+    for name, val in zip(log1['video_name'], diff):
+        print(f'{name}: {val:f}')
+    
+    #print(log2['psnr'].idxmin())
+
+def concat_images():
+    import glob 
+    from PIL import Image
+    from tqdm import tqdm
+    import numpy as np
+
+    images_list = [
+        sorted(glob.glob(f'results/ptfn_inter010/skate-jump/input/50/*.png')),
+        sorted(glob.glob(f'results/ptfn_inter010/skate-jump/GT/*.png')),
+        sorted(glob.glob(f'results/bsvd_pretrained/skate-jump/generated/50/*.png')),
+        sorted(glob.glob(f'results/ptfn_inter010/skate-jump/generated/50/*.png')),
+    ]
+    w, h = 854, 480
+    n_images = 25
+    n_columns = len(images_list)
+    for i in range(n_images):
+        print(f'{i:03}: ', end='')
+        img_gt = np.array(Image.open(images_list[1][i]))
+        compare_img = Image.new('RGB', size=(w*n_columns, h))
+        for j in range(n_columns):
+            img = Image.open(images_list[j][i])
+            compare_img.paste(img, box=(w*j,0))
+
+            img = np.array(img)
+            mse = np.mean((img_gt-img)**2)
+            psnr = 20*np.log10(255.0/mse**0.5)
+            print(f'{psnr:f} dB, ', end='')
+        print()
+
+        compare_img.save(f'temp/cmp_{i:03}.png')
+        
 
 if __name__=='__main__':
     #yoyaku()
     #check_block2()
-    check_convert_state_dict()
+    #check_diff()
+    concat_images()
+
+
+# 250001,0.0003087237902913379,-36.982525
+# 250001,9.535928945656333e-05,-36.157455
+# 250001,0.0003087237902913379,-36.872372
+
+# 300001,0.00014652918823252866,-35.504791
+# 300001,0.00014652918823252866,-35.962147

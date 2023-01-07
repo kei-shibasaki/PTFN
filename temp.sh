@@ -5,9 +5,10 @@ CUDA_VISIBLE_DEVICES=7 python temp.py
 CUDA_VISIBLE_DEVICES=1 python temp.py
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m train_codes.train_dp -c config/config_ptfn.json
-CUDA_VISIBLE_DEVICES=0,1,2,3 python -m train_codes.train_dp -c config/config_ptfn2.json
-CUDA_VISIBLE_DEVICES=1,5 python -m train_codes.train_dp -c config/config_ptfn3.json
-CUDA_VISIBLE_DEVICES=0,1 python -m train_codes.train_dp -c config/config_ptfn2.json
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m train_codes.train_dp -c config/config_ptfn4.json
+CUDA_VISIBLE_DEVICES=3,5 python -m train_codes.train_dp -c config/config_ptfn4.json
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m train_codes.train_progressive_dp -c config/config_ptfn_pro.json
+CUDA_VISIBLE_DEVICES=0,1 python -m train_codes.train_progressive_dp -c config/config_ptfn_pro.json
 CUDA_VISIBLE_DEVICES=5 python -m train_codes.train -c config/config_ptfn.json
 
 

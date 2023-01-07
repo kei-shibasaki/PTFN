@@ -45,16 +45,19 @@ def train(opt_path):
     loss_fn = PSNRLoss().to(device)
     network_module = importlib.import_module('models.network')
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
-    netG = nn.DataParallel(netG, device_ids=[0,1])
-    netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
     schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
+    if opt.resume_step is not None:
+        for _ in range(opt.resume_step): schedulerG.step()
 
     if opt.pretrained_path:
         state_dict = torch.load(opt.pretrained_path, map_location=device)
-        netG.load_state_dict(state_dict['netG_state_dict'], strict=False)
+        netG.load_state_dict(state_dict['netG_state_dict'], strict=True)
         optimG.load_state_dict(state_dict['optimG_state_dict'])
 
+    netG = nn.DataParallel(netG, device_ids=[0,1,2,3])
+    netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
+    
     train_dataset = VideoDenoisingDatasetTrain(opt)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
     val_loaders = {}
@@ -65,7 +68,7 @@ def train(opt_path):
 
     print('Start Training')
     start_time = time.time()
-    total_step = 0
+    total_step = 0 if opt.resume_step is None else opt.resume_step
     best_psnr = -float('inf')
     netG.train()
     for e in range(1, 42*opt.steps):
@@ -82,7 +85,7 @@ def train(opt_path):
             gens, inter_imgs = netG(input_seq, noise_map)
             loss_G_inter = loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
             loss_G_final = loss_fn(gens.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
-            loss_G = loss_G_final + opt.inter_coef*loss_G_inter
+            loss_G = (loss_G_final + opt.inter_coef*loss_G_inter) / (1+opt.inter_coef)
 
             loss_G.backward()
             if opt.use_grad_clip: torch.nn.utils.clip_grad_norm_(netG.parameters(), opt.grad_clip_val)
@@ -97,8 +100,8 @@ def train(opt_path):
                     fp.write(f'{total_step},{lr_G[0]},{loss_G:f}\n')
             
             if total_step%opt.print_freq==0 or total_step==1:
-                rest_step = opt.steps-total_step
-                time_per_step = int(time.time()-start_time) / total_step
+                rest_step = opt.steps-total_step 
+                time_per_step = int(time.time()-start_time) / total_step if opt.resume_step is None else int(time.time()-start_time) / (total_step-opt.resume_step)
                 elapsed = datetime.timedelta(seconds=int(time.time()-start_time))
                 eta = datetime.timedelta(seconds=int(rest_step*time_per_step))
                 lg = f'{total_step}/{opt.steps}, Epoch:{str(e).zfill(len(str(opt.steps)))}, elepsed: {elapsed}, eta: {eta}, '
@@ -137,7 +140,7 @@ def train(opt_path):
                                 gens, inter_imgs = netG_val(input_seq, noise_map)
                                 loss_G_inter = loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
                                 loss_G_final = loss_fn(gens.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
-                                loss_G = loss_G_final + opt.inter_coef*loss_G_inter
+                                loss_G = (loss_G_final + opt.inter_coef*loss_G_inter) / (1+opt.inter_coef)
                         
                         # (B,F,C,H,W) -> [(B,C,H,W)]*F
                         imgs, inter_imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, inter_imgs, gens, gt_seq])

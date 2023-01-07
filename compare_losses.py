@@ -11,8 +11,10 @@ def smoothing(array, a):
     return new_array
 
 def compare_losses():
-    names = ['ptfn_v4_small_b16', 'ptfn_inter000', 'ptfn_inter001', 'ptfn_inter100']
-    #names = ['ptfn_b16', 'ptfn_v4_b16']
+    #names = ['ptfn_v4_small_b16', 'ptfn_inter000', 'ptfn_inter001', 'ptfn_inter100']
+    names = ['ptfn_inter000', 'ptfn_inter010', 'ptfn_inter100_2', 'ptfn_inter010_progressive_resume']
+    #names = ['ptfn_v4_b16', 'ptfn-L', 'ptfn-L_resume', 'ptfn-L_inter010']
+    #names = ['ptfn_inter010_progressive_resume', 'ptfn_inter100_2', 'ptfn-L_resume', 'ptfn-L_inter010']
     train_logs = {}
     val_logs = {}
     for name in names:

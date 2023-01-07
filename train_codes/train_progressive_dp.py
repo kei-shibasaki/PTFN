@@ -76,15 +76,15 @@ def train(opt_path):
                 print(f'{opt.batch_size}, {opt.input_resolution}, {opt.n_frames}')
 
                 netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
-                netG.load_state_dict(netG_state_dict)
-                netG = nn.DataParallel(netG, device_ids=[0,1])
                 optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
-                optimG.load_state_dict(optimG_state_dict)
                 schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
                 for _ in range(i): schedulerG.step()
+                netG.load_state_dict(netG_state_dict)
+                netG = nn.DataParallel(netG, device_ids=[0,1])
+                optimG.load_state_dict(optimG_state_dict)
                 train_dataset.change_configs(opt.n_frames, opt.input_resolution)
                 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
-                #print('Done. Resume Training...')
+
     if opt.create_new_log:
         with open(log_path, mode='w', encoding='utf-8') as fp: fp.write('')
         with open(log_train_losses_path, mode='w', encoding='utf-8') as fp: fp.write('step,lr,loss_G\n')
@@ -112,10 +112,10 @@ def train(opt_path):
             gens, inter_imgs = netG(input_seq, noise_map)
             loss_G_inter = loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
             loss_G_final = loss_fn(gens.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
-            loss_G = loss_G_final + 0.1*loss_G_inter
+            loss_G = (loss_G_final + opt.inter_coef*loss_G_inter) / (1+opt.inter_coef)
 
             loss_G.backward()
-            if opt.use_grad_clip: torch.nn.utils.clip_grad_norm_(netG.parameters(), 0.01)
+            if opt.use_grad_clip: torch.nn.utils.clip_grad_norm_(netG.parameters(), opt.grad_clip_val)
             optimG.step()
             schedulerG.step()
             
@@ -128,7 +128,7 @@ def train(opt_path):
             
             if total_step%opt.print_freq==0 or total_step==1:
                 rest_step = opt.steps-total_step
-                time_per_step = int(time.time()-start_time) / total_step
+                time_per_step = int(time.time()-start_time) / total_step if opt.resume_step is None else int(time.time()-start_time) / (total_step-opt.resume_step)
                 elapsed = datetime.timedelta(seconds=int(time.time()-start_time))
                 eta = datetime.timedelta(seconds=int(rest_step*time_per_step))
                 lg = f'{total_step}/{opt.steps}, Epoch:{str(e).zfill(len(str(opt.steps)))}, elepsed: {elapsed}, eta: {eta}, '
@@ -167,7 +167,7 @@ def train(opt_path):
                                 gens, inter_imgs = netG_val(input_seq, noise_map)
                                 loss_G_inter = loss_fn(inter_imgs.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
                                 loss_G_final = loss_fn(gens.reshape(b*f,c,h,w), gt_seq.reshape(b*f,c,h,w))
-                                loss_G = loss_G_final + 0.1*loss_G_inter
+                                loss_G = (loss_G_final + opt.inter_coef*loss_G_inter) / (1+opt.inter_coef)
                         
                         # (B,F,C,H,W) -> [(B,C,H,W)]*F
                         imgs, inter_imgs, gens, gts = map(lambda x: x.unbind(dim=1), [input_seq, inter_imgs, gens, gt_seq])
@@ -227,12 +227,12 @@ def train(opt_path):
                 print(f'{opt.batch_size}, {opt.input_resolution}, {opt.n_frames}')
 
                 netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
-                netG.load_state_dict(netG_state_dict)
-                netG = nn.DataParallel(netG, device_ids=[0,1])
                 optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
-                optimG.load_state_dict(optimG_state_dict)
                 schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)
                 for _ in range(total_step): schedulerG.step()
+                netG.load_state_dict(netG_state_dict)
+                netG = nn.DataParallel(netG, device_ids=[0,1])
+                optimG.load_state_dict(optimG_state_dict)
                 train_dataset.change_configs(opt.n_frames, opt.input_resolution)
                 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=2)
                 print('Done. Resume Training...')
