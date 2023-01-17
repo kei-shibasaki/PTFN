@@ -88,7 +88,7 @@ def convert_state_dict(state_dict):
     return new_state_dict
 
 def load_fake_img(b,f,c,h,w):
-    img = read_img('utils/ai_pet_family.png').unsqueeze(0)
+    img = read_img('scripts/ai_pet_family.png').unsqueeze(0)
     img = F.interpolate(img, size=[h,w], mode='bilinear', align_corners=False).unsqueeze(1)
     img = img.repeat(b,f,1,1,1)
     return img
@@ -101,3 +101,17 @@ def arrange_images(images):
     for i, img in enumerate(images):
         out.paste(img, box=(i*w, 0))
     return out
+
+def convert_state_dict_to_half(state_dict):
+    new_state_dict = OrderedDict()
+    keys, values = [], []
+    for key, value in state_dict.items():
+        if 'temp2' in key:
+            continue
+        keys.append(key)
+        values.append(value)
+    
+    for key, value in zip(keys, values):
+        new_state_dict[key] = value
+    
+    return new_state_dict

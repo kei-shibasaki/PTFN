@@ -24,7 +24,7 @@ def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_
     dataset_paths = sorted([d for d in glob.glob('datasets/Set8/*') if os.path.isdir(d)])
     opt.data_extention = 'png'
     #dataset_paths = ['datasets/Set8/hypersmooth']
-    network_module = importlib.import_module('models.network')
+    network_module = importlib.import_module('models.network_gelu')
     net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     net.load_state_dict(convert_state_dict(checkpoint['netG_state_dict']), strict=True)

@@ -3,8 +3,8 @@ import numpy as np
 import time
 from easydict import EasyDict
 import importlib
-from UNUSED.wnet_bsvd import BSVD
-from models.network import PseudoTemporalFusionNetworkEvalHalf
+#from UNUSED.wnet_bsvd import BSVD
+from models.network_gelu import PseudoTemporalFusionNetworkEvalHalf
 
 from scripts.utils import load_option
 
@@ -18,10 +18,10 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    network_module = importlib.import_module('models.network')
+    #network_module = importlib.import_module('models.network')
     #net = BSVD(pretrain_ckpt=None).to(device)
-    #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
-    net = getattr(network_module, opt['model_type_test'])(opt).to(device)
+    net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
+    #net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     net.eval()
 
     # Blank Shot
@@ -62,9 +62,10 @@ if __name__=='__main__':
     #H, W = 256, 256
     #H, W = 480, 720
     #H, W = 480, 856
-    H, W = 720, 1280
+    #H, W = 720, 1280
     #H, W = 1080, 1920
-    #H, W = 2560, 1440
+    H, W = 2560, 1440
     #H, W = 540, 960
+    #H, W = 
     runtimes = calc_speed(resolution=[H, W])
     print(f'{np.mean(runtimes)/50:f} ± {np.std(runtimes)/50:f} s')

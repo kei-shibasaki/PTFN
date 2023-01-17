@@ -37,30 +37,30 @@ def check_block():
     #print(f'GMACs: {macs/1e9/f:f}, #Params: {params/1e6:f}')
 
 def check_block2():
-    from models.network7 import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval, PseudoTemporalFusionNetworkEvalHalf
+    from models.network_blind import PseudoTemporalFusionNetwork, PseudoTemporalFusionNetworkEval, PseudoTemporalFusionNetworkEvalHalf
+    from models.network_blind import PseudoTemporalFusionNetworkL, PseudoTemporalFusionNetworkEvalL, PseudoTemporalFusionNetworkEvalHalfL
     #from UNUSED.wnet_bsvd import BSVD
     import thop
 
-    with open('config/config_test.json', 'r', encoding='utf-8') as fp:
+    with open('config/config_ptfn.json', 'r', encoding='utf-8') as fp:
         opt = EasyDict(json.load(fp))
     device = torch.device('cuda')
     #b,f,c,h,w = 8,opt.n_frames,3,96,96
-    #b,f,c,h,w = 1,50,3,480,856
-    b,f,c,h,w = 1,50,3,720,1280
+    b,f,c,h,w = 1,50,3,480,856
+    #b,f,c,h,w = 1,50,3,720,1280
 
     x = torch.rand((b,f,c,h,w)).to(device)
-    noise_map = torch.rand((b,f,1,h,w)).to(device)
-    net = PseudoTemporalFusionNetworkEval(opt).to(device)
+    noise_map = torch.rand((b,1,1,h,w)).to(device)
+    net = PseudoTemporalFusionNetworkEvalL(opt).to(device)
     #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
     #net = PseudoTemporalFusionNetwork(opt).to(device)
     #net = BSVD(pretrain_ckpt=None).to(device)
-    #out = net(x, noise_map)
-    #print(out.shape)
+    out1, out2 = net(x)
+    print(out1.shape, out2.shape)
     #torchinfo.summary(net, input_data=[x, noise_map])
-
-    macs, params = thop.profile(net, inputs=(x, noise_map))
-    print(f'GMACs: {macs/1e9/50:f}')
-    print(f'#Params (M): {params/1e6:f}')
+    #macs, params = thop.profile(net, inputs=(x))
+    #print(f'GMACs: {macs/1e9/50:f}')
+    #print(f'#Params (M): {params/1e6:f}')
 
 
 def yoyaku():
@@ -269,8 +269,8 @@ def check_img2():
 def check_gif():
     from PIL import Image
     import glob
-    img_paths1 = sorted(glob.glob('results/naf_small_mod2/car-race/input/50/*.png'))
-    img_paths2 = sorted(glob.glob('results/naf_small_mod2/car-race/generated/50/*.png'))
+    img_paths1 = sorted(glob.glob('results/ptfn_inter010_set8/snowboard/input/50/*.png'))
+    img_paths2 = sorted(glob.glob('results/ptfn_inter010_set8/snowboard/generated/50/*.png'))
     print(len(img_paths1), len(img_paths2))
 
     images = []
@@ -311,17 +311,17 @@ def check_compare_video_mp4():
     import glob
     import numpy as np
 
-    img_paths1 = sorted(glob.glob('results/fastdvd_level5/rollercoaster/input/50/*.png'))
+    img_paths1 = sorted(glob.glob('results/ptfn_inter010_set8/snowboard/input/50/*.png'))
     images1 = [cv2.imread(img_path) for img_path in img_paths1]
-    img_paths2 = sorted(glob.glob('results/fastdvd_level5/rollercoaster/generated/50/*.png'))
+    img_paths2 = sorted(glob.glob('results/ptfn_inter010_set8/snowboard/GT/*.png'))
     images2 = [cv2.imread(img_path) for img_path in img_paths2]
-    img_paths3 = sorted(glob.glob('results/fastdvd_level5/rollercoaster/GT/*.png'))
+    img_paths3 = sorted(glob.glob('results/ptfn_inter010_set8/snowboard/generated/50/*.png'))
     images3 = [cv2.imread(img_path) for img_path in img_paths3]
     
     video_size = [3*images1[0].shape[1], images1[0].shape[0]]
     frame_rate = 24
     fmt = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
-    writer = cv2.VideoWriter('temp.mp4', fmt, frame_rate, video_size)
+    writer = cv2.VideoWriter('temp/temp.mp4', fmt, frame_rate, video_size)
     
     for img1, img2, img3 in zip(images1, images2, images3):
         writer.write(np.hstack([img1, img2, img3]))
@@ -936,9 +936,11 @@ def concat_images():
 
 if __name__=='__main__':
     #yoyaku()
-    #check_block2()
+    check_block2()
     #check_diff()
-    concat_images()
+    #concat_images()
+    #check_gif()
+    #check_compare_video_mp4()
 
 
 # 250001,0.0003087237902913379,-36.982525

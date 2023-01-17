@@ -12,9 +12,10 @@ def smoothing(array, a):
 
 def compare_losses():
     #names = ['ptfn_v4_small_b16', 'ptfn_inter000', 'ptfn_inter001', 'ptfn_inter100']
-    names = ['ptfn_inter000', 'ptfn_inter010', 'ptfn_inter100_2', 'ptfn_inter010_progressive_resume']
+    #names = ['ptfn_inter000', 'ptfn_inter010', 'ptfn_inter100', 'ptfn_inter100_2', 'ptfn_inter010_progressive_resume']
     #names = ['ptfn_v4_b16', 'ptfn-L', 'ptfn-L_resume', 'ptfn-L_inter010']
-    #names = ['ptfn_inter010_progressive_resume', 'ptfn_inter100_2', 'ptfn-L_resume', 'ptfn-L_inter010']
+    #names = ['ptfn_inter010', 'ptfn_gelu', 'ptfn_ahead', 'ptfn_k7', 'ptfn_ahead_k7', 'ptfn_ahead_k7_resume']
+    names = ['ptfn-L_inter000_finetune', 'ptfn_inter010_finetune_2']
     train_logs = {}
     val_logs = {}
     for name in names:
@@ -28,8 +29,8 @@ def compare_losses():
         tlog = train_logs[name]
         vlog = val_logs[name]
         plt.plot(tlog['step'], smoothing(tlog['loss_G'], 0.99), alpha=0.5, label=f'{name} train')
-        plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_inter'], 0.0), alpha=0.5, label=f'{name} val inter')
-        plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_final'], 0.0), alpha=0.5, label=f'{name} val final')
+        #plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_inter'], 0.0), alpha=0.5, label=f'{name} val inter')
+        #plt.plot(vlog['step'], smoothing(vlog['loss_G'+'_final'], 0.0), alpha=0.5, label=f'{name} val final')
     plt.ylim(-42, -30)
     plt.legend()
     plt.grid()
@@ -39,7 +40,7 @@ def compare_losses():
     for name in names:
         vlog = val_logs[name]
         plt.plot(vlog['step'], smoothing(vlog[metric], 0.0), alpha=0.5, label=f'{name}')
-        plt.plot(vlog['step'], smoothing(vlog[metric+'_inter'], 0.0), alpha=0.5, label=f'{name} inter')
+        #plt.plot(vlog['step'], smoothing(vlog[metric+'_inter'], 0.0), alpha=0.5, label=f'{name} inter')
 
     plt.ylim(30, 35)
     plt.legend()

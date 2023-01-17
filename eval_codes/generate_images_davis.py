@@ -14,7 +14,7 @@ from datasets.dataset import SingleVideoDenoisingDatasetTest
 from scripts.utils import convert_state_dict, load_fake_img, load_option, pad_tensor, tensor2ndarray, arrange_images
 
 
-def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_img=False):
+def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_img=True):
     seed = 0
     np.random.seed(seed)
     torch.manual_seed(seed)
