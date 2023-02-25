@@ -18,10 +18,10 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    #network_module = importlib.import_module('models.network')
+    network_module = importlib.import_module('models.network_3stage')
+    net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     #net = BSVD(pretrain_ckpt=None).to(device)
-    net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
-    #net = getattr(network_module, opt['model_type_test'])(opt).to(device)
+    #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
     net.eval()
 
     # Blank Shot
@@ -63,8 +63,8 @@ if __name__=='__main__':
     #H, W = 480, 720
     #H, W = 480, 856
     #H, W = 720, 1280
-    #H, W = 1080, 1920
-    H, W = 2560, 1440
+    H, W = 1080, 1920
+    #H, W = 2560, 1440
     #H, W = 540, 960
     #H, W = 
     runtimes = calc_speed(resolution=[H, W])

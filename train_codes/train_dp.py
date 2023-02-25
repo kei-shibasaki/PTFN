@@ -43,7 +43,7 @@ def train(opt_path):
     shutil.copy(opt_path, f'./experiments/{opt.name}/{os.path.basename(opt_path)}')
     
     loss_fn = PSNRLoss().to(device)
-    network_module = importlib.import_module('models.network_ahead_k7')
+    network_module = importlib.import_module('models.network_simplegate')
     netG = getattr(network_module, opt['model_type_train'])(opt).to(device)
     optimG = torch.optim.Adam(netG.parameters(), lr=opt.learning_rate_G, betas=opt.betas)
     schedulerG = torch.optim.lr_scheduler.CosineAnnealingLR(optimG, T_max=opt.T_max, eta_min=opt.eta_min)

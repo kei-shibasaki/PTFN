@@ -55,7 +55,7 @@ def train(opt_path):
         netG_state_dict = convert_state_dict_to_half(state_dict['netG_state_dict'])
         netG.load_state_dict(netG_state_dict, strict=True)
 
-    netG = nn.DataParallel(netG, device_ids=[0,1])
+    netG = nn.DataParallel(netG, device_ids=[0,1,2,3])
     netG_val = getattr(network_module, opt['model_type_test'])(opt).to(device)
     
     train_dataset = VideoDenoisingDatasetTrain(opt)

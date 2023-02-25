@@ -41,6 +41,11 @@ class PseudoTemporalFusion(nn.Module):
         x1, x2, x3 = x.chunk(3, dim=1)
         return 0.5*(x1*x2 + x2*x3)
 
+class SimpleGate(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=1)
+        return x1+x2
+
 class TemporalShift(nn.Module):
     def __init__(self, n_segment, shift_type, fold_div=8, stride=1):
         super().__init__()
@@ -105,8 +110,8 @@ class PseudoTemporalFusionBlock(nn.Module):
         super().__init__()
         # self.alpha = nn.Parameter(torch.zeros((1, dim, 1, 1)), requires_grad=True)
         self.norm = LayerNorm2d(dim)
-        self.conv1 = nn.Conv2d(dim, 3*dim, kernel_size=1, bias=True)
-        self.ptf = PseudoTemporalFusion()
+        self.conv1 = nn.Conv2d(dim, 2*dim, kernel_size=1, bias=True)
+        self.ptf = SimpleGate()
         self.conv2 = nn.Conv2d(dim, dim, kernel_size=1, bias=True)
     
     def forward(self, x):

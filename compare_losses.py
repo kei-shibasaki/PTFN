@@ -15,7 +15,7 @@ def compare_losses():
     #names = ['ptfn_inter000', 'ptfn_inter010', 'ptfn_inter100', 'ptfn_inter100_2', 'ptfn_inter010_progressive_resume']
     #names = ['ptfn_v4_b16', 'ptfn-L', 'ptfn-L_resume', 'ptfn-L_inter010']
     #names = ['ptfn_inter010', 'ptfn_gelu', 'ptfn_ahead', 'ptfn_k7', 'ptfn_ahead_k7', 'ptfn_ahead_k7_resume']
-    names = ['ptfn-L_inter000_finetune', 'ptfn_inter010_finetune_2']
+    names = ['ptfn_inter010', 'ptfn_blind', 'ptfn-L_inter010', 'ptfn-L_blind']
     train_logs = {}
     val_logs = {}
     for name in names:

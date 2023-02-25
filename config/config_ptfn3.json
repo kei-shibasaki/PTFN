@@ -4,7 +4,7 @@
     "val_dataset_path": "./datasets/DAVIS-test/JPEGImages/480p/rollercoaster",
     "enable_line_nortify": true,
 
-    "name": "ptfn_gelu",
+    "name": "ptfn_simplegate",
     "model_type_train": "PseudoTemporalFusionNetwork",
     "model_type_test": "PseudoTemporalFusionNetworkEval",
     "batch_size": 16,
@@ -24,7 +24,7 @@
     "eval_freq": 5000,
     "save_freq": 50000,
     "pretrained_path": null,
-    "resume_step": null,
+    "resume_step": 0,
     "create_new_log": true,
     "sigmas_for_eval": [50],
 

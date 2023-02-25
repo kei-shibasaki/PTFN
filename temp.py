@@ -934,11 +934,82 @@ def concat_images():
         compare_img.save(f'temp/cmp_{i:03}.png')
         
 
+def check_speed_unpix():
+    import torch 
+    from torch import nn 
+    import numpy as np 
+    from tqdm import tqdm 
+    from models.layers import PseudoTemporalFusionBlock, TemporalShift, LayerNorm2d
+
+    device = torch.device('cuda')
+
+    class Toy1(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.tsm = TemporalShift(n_segment=11, shift_type='TSM')
+            self.layer = PseudoTemporalFusionBlock(dim)
+
+        def forward(self, x):
+            x = self.tsm(x)
+            x = self.layer(x)
+            return x
+    
+    class Toy2(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.norm = LayerNorm2d(dim)
+            self.conv1 = nn.Conv3d(dim, dim, kernel_size=3, stride=1, padding=1)
+            self.gelu = nn.GELU()
+
+        def forward(self, x):
+            f,c,h,w = x.shape
+            x = self.norm(x)
+            x = x.reshape(-1,c,f,h,w)
+            x = self.conv1(x)
+            x = x.reshape(f,c,h,w)
+            x = self.gelu(x)
+            return x
+    
+    f, h, w = 11, 128, 128
+    dim = 64
+    net1 = Toy1(dim).to(device)
+    net2 = Toy2(dim).to(device)
+
+    with torch.no_grad():
+        runtimes1 = []
+        for i in range(51):
+            x = torch.rand((f,dim,h,w)).to(device)
+            torch.cuda.synchronize()
+            start = time.time()
+            out = net1(x)
+            torch.cuda.synchronize()
+            elapsed = time.time()-start
+            if i!=0: runtimes1.append(elapsed)
+            print(f'{i:02} -> {elapsed:f} s')
+    
+    with torch.no_grad():
+        runtimes2 = []
+        for i in range(51):
+            x = torch.rand((f,dim,h,w)).to(device)
+            torch.cuda.synchronize()
+            start = time.time()
+            out = net2(x)
+            torch.cuda.synchronize()
+            elapsed = time.time()-start
+            if i!=0: runtimes2.append(elapsed)
+            print(f'{i:02} -> {elapsed:f} s')
+    
+    runtimes1 = np.array(runtimes1)
+    runtimes2 = np.array(runtimes2)
+    print(f'{runtimes1.mean():f} ± {runtimes1.std():f}')
+    print(f'{runtimes2.mean():f} ± {runtimes2.std():f}')
+
+
 if __name__=='__main__':
     #yoyaku()
-    check_block2()
+    #check_block2()
     #check_diff()
-    #concat_images()
+    check_speed_unpix()
     #check_gif()
     #check_compare_video_mp4()
 

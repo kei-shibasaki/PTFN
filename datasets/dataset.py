@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from scripts.utils import read_img
 
+
 class VideoDenoisingDatasetTrain(torch.utils.data.Dataset):
     def __init__(self, opt):
         super().__init__()
