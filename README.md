@@ -7,13 +7,13 @@ This source code provides a PyTorch implementation of the Pseudo Temporal Fusion
 # Datasets 
 The same dataset as [FastDVDNet](https://github.com/m-tassano/fastdvdnet) is used for experiments.
 ## Trainset 
-The 2017 DAVIS train dataset was used for training. You can download `DAVIS-train.tar` from [here](). 
+The 2017 DAVIS train dataset was used for training. You can download `DAVIS-train.tar` from [here](https://drive.google.com/file/d/1zoTGqsbEIoPEr7s1RnHVXWhx2SV3OlcH/view?usp=share_link). 
 Put extracted `DAVIS-train.tar` to `./datasets`.
 
 ## Testset
 Two testsets are used in the paper: Set8 and the 2017 DAVIS testset.
-You can download `DAVIS-test.tar` from [here](). 
-You can download `Set8.tar` from [here]().
+You can download `DAVIS-test.tar` from [here](https://drive.google.com/file/d/1J-FyhyZc5wU-bYb3UanubPoGq4ux9T3T/view?usp=share_link). 
+You can download `Set8.tar` from [here](https://drive.google.com/file/d/1XTDPeokNY3jAxmA5dWceKsLEaYZbTBXz/view?usp=share_link).
 Put extracted `DAVIS-test.tar` and `Set8.tar` to `./datasets`.
 
 # Dependencies and Installation
@@ -55,7 +55,7 @@ CUDA_VISIBLE_DEVICES=0,1 python -m train_codes.finetune_dp -c config/config_fine
 ```
 
 # Test
-You may download pretrained checkpoints from [here]()
+You may download pretrained checkpoints from [here](https://drive.google.com/drive/folders/1rryr3Iin2W-UO30e6tkFOpWvf2rj2rVL?usp=share_link)
 Then, run the commands below.
 ``` console
 GPU_ID=0
@@ -67,4 +67,3 @@ python -m eval_codes.evaluation -nl $noise_levels -c $CONFIG
 #python -m eval_codes.evaluation -nl $noise_levels --set8 -c $CONFIG
 ```
 
-# Results
