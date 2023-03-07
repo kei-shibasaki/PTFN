@@ -37,7 +37,7 @@ python -m eval_codes.evaluation -c experiments/fastdvdM/config_M.json
 
 
 CUDA_VISIBLE_DEVICES=3 python calc_speed.py
-CUDA_VISIBLE_DEVICES=0 python calc_speed_bsvd.py
-CUDA_VISIBLE_DEVICES=2 python calc_speed_bsvd.py
+CUDA_VISIBLE_DEVICES=1 python calc_speed_bsvd.py
+CUDA_VISIBLE_DEVICES=5 python calc_speed_bsvd.py
 CUDA_VISIBLE_DEVICES=7 python calc_speed_remo.py
 CUDA_VISIBLE_DEVICES=3 python calc_speed_vnlb.py

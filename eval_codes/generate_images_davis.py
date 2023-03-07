@@ -24,7 +24,7 @@ def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_
     dataset_paths = sorted([d for d in glob.glob('datasets/DAVIS-test/JPEGImages/480p/*') if os.path.isdir(d)])
     opt.data_extention = 'jpg'
     #dataset_paths = ['datasets/DAVIS-test/JPEGImages/480p/rollercoaster']
-    network_module = importlib.import_module('models.network')
+    network_module = importlib.import_module('models.network_simplegate')
     net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     net.load_state_dict(convert_state_dict(checkpoint['netG_state_dict']), strict=True)
@@ -84,8 +84,8 @@ def generate_images(opt, checkpoint_path, out_dir, noise_levels, generate_inter_
                     inter_img.save(os.path.join(out_dataset_dir, 'generated_inter', str(sigma),  fname), 'PNG')
                     gen.save(os.path.join(out_dataset_dir, 'generated', str(sigma), fname), 'PNG')
                     if sigma==noise_levels[0]: gt.save(os.path.join(out_dataset_dir, 'GT', fname), 'PNG')
-                    compare_img = arrange_images([img,inter_img,gen,gt])
-                    compare_img.save(os.path.join(out_dataset_dir, 'comparison', str(sigma), fname), 'PNG')
+                    #compare_img = arrange_images([img,inter_img,gen,gt])
+                    #compare_img.save(os.path.join(out_dataset_dir, 'comparison', str(sigma), fname), 'PNG')
 
                     cnt += 1
 

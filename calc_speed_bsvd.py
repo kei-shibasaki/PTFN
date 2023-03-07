@@ -9,7 +9,7 @@ from models.network_gelu import PseudoTemporalFusionNetworkEvalHalf
 from scripts.utils import load_option
 
 def calc_speed(resolution):
-    opt_path = 'config/config_ptfn.json'
+    opt_path = 'config/config_ptfn3.json'
     #opt_path = 'experiments/ptfn_b8/config_test.json'
     opt = EasyDict(load_option(opt_path))
     divisible_by = 8
@@ -18,13 +18,12 @@ def calc_speed(resolution):
 
     print('Creating Network...')
     device = torch.device('cuda:0')
-    network_module = importlib.import_module('models.network_3stage')
+    network_module = importlib.import_module('models.network_simplegate')
     net = getattr(network_module, opt['model_type_test'])(opt).to(device)
     #net = BSVD(pretrain_ckpt=None).to(device)
     #net = PseudoTemporalFusionNetworkEvalHalf(opt).to(device)
     net.eval()
 
-    # Blank Shot
     print('Processing Denoising...')
     runtimes = []
     with torch.no_grad():
@@ -32,6 +31,7 @@ def calc_speed(resolution):
         input_seq = torch.rand([1, n_frames, 3, *resolution]).to(device)
         noise_map = torch.rand([1, 1, 1, *resolution]).to(device)
 
+        # Blank Shot
         torch.cuda.synchronize()
         start = time.time()
         out = net(input_seq, noise_map)

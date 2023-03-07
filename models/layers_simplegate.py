@@ -44,7 +44,7 @@ class PseudoTemporalFusion(nn.Module):
 class SimpleGate(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=1)
-        return x1+x2
+        return x1*x2
 
 class TemporalShift(nn.Module):
     def __init__(self, n_segment, shift_type, fold_div=8, stride=1):
