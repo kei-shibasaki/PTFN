@@ -128,13 +128,3 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-.empty
-datasets/*
-!datasets/*.py
-experiments/
-line_nortify_token.json
-results/
-temp/
-compare/
-.vscode/
-UNUSED/
